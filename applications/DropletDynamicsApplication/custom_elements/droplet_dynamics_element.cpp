@@ -14,6 +14,8 @@
 #include "droplet_dynamics_application_variables.h"
 #include "../../FluidDynamicsApplication/custom_utilities/two_fluid_navier_stokes_data.h"
 #define PI 3.14159265358979
+// AW 7.4: added to print normal output
+#include <fstream>
 
 namespace Kratos
 {
@@ -2210,15 +2212,45 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     // At the moment, it can be constant for the cut element
     const Vector external_int_force = this->GetValue(EXT_INT_FORCE);
 
+    // AW 7.4: File output setup — append mode
+    std::ofstream output_file;
+    output_file.open("TPCL_GaussPoints.txt", std::ios::app);  // Appends across elements
+
     for (unsigned int intgp = 0; intgp < rInterfaceWeights.size(); ++intgp){
         const double intgp_curv = rCurvature(intgp);
         const double intgp_w = rInterfaceWeights(intgp);
         const auto& intgp_normal = rInterfaceNormalsNeg[intgp];
+
+        // AW 7.4 : Get Gauss point coordinates
+        array_1d<double, 3> gp_coords = ZeroVector(3);
+        for (unsigned int i = 0; i < NumNodes; ++i) {
+            const auto& node_coords = this->GetGeometry()[i].Coordinates();
+            for (unsigned int d = 0; d < 3; ++d) {
+                gp_coords[d] += rInterfaceShapeFunctions(intgp, i) * node_coords[d];
+            }
+        }
+
         for (unsigned int i = 0; i < NumNodes; ++i){
             for (unsigned int dim = 0; dim < NumNodes-1; ++dim){
                 rRHS[ i*(NumNodes) + dim ] += ( -SurfaceTensionCoefficient*intgp_curv*intgp_normal[dim]
                     + external_int_force[dim] )*intgp_w*rInterfaceShapeFunctions(intgp,i);
             }
+        }
+        // AW 7.4: Optional debug print
+        const double tol = 11e-3;
+        if (std::abs(gp_coords[1]) < tol) {
+            std::string side = (gp_coords[0] < 0.027) ? "LEFT" : "RIGHT";
+            output_file << std::fixed << std::setprecision(8)
+                        << ", Element ID: " << this->Id()
+                        << ", Gauss Point: " << intgp
+                        << ", x = " << gp_coords[0]
+                        << ", y = " << gp_coords[1]
+                        << ", Curvature = " << intgp_curv
+                        << ", Normal = (" << intgp_normal[0]
+                        << ", " << intgp_normal[1]
+                        << ", " << intgp_normal[2] << ")"
+                        << ", Side: " << side
+                        << ", RHS: " << rRHS << "\n";
         }
     }
 }
