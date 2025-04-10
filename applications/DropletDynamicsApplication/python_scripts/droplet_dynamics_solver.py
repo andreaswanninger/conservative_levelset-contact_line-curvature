@@ -366,6 +366,20 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # Fit curves to the points on an element-by-element basis
         KratosDroplet.IntersectionPointsUtility.ProcessIntersectionPointsAndFitCurves("element_curves.txt")
         KratosDroplet.IntersectionPointsUtility.ProcessIntersectionPointsAndFitCurvesparabola("element_curves_parabola.txt")
+
+        # AW 9.4: Ensure curvature file is cleared before writing
+        open("element_curvatures_simplified.csv", "w").close()
+
+        KratosDroplet.CurvatureFittingUtility.ComputeFittedCurvatures(
+            "element_curves_parabola.txt",
+            "element_curves.txt",
+            "intersection_points.txt",
+            "element_curvatures_simplified.csv"
+        )
+
+        KratosDroplet.CurvatureFittingUtility.LoadCurvatureCSV("element_curvatures_simplified.csv")
+
+
     
 
         # filtering noises is necessary for curvature calculation

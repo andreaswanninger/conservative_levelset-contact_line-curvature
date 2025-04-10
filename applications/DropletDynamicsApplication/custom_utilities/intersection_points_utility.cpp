@@ -814,9 +814,10 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurves(const std:
         return;
     }
     
+    // AW 8.4: increased number of neighbours to 3
     // Configuration parameters
     const int MIN_POINTS_FOR_CIRCLE_FIT = 3;  // Absolute minimum needed for circle
-    const int NEIGHBOR_EXPANSION_LEVEL = 2;   // Expand to n-hop neighbors
+    const int NEIGHBOR_EXPANSION_LEVEL = 4;   // Expand to n-hop neighbors
     
     std::cout << "Starting circle fitting with " << points.size() << " intersection points." << std::endl;
     std::cout << "Using all available points from 2-hop neighborhoods." << std::endl;
@@ -1105,9 +1106,10 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
         return;
     }
     
+    // AW 8.4: increased number of neighbours to 3
     // Configuration parameters
     const int MIN_POINTS_FOR_CURVE_FIT = 3;  // Absolute minimum needed for quadratic
-    const int NEIGHBOR_EXPANSION_LEVEL = 2;   // Expand to n-hop neighbors
+    const int NEIGHBOR_EXPANSION_LEVEL = 4;   // Expand to n-hop neighbors
     
     std::cout << "Starting quadratic curve fitting with " << points.size() << " intersection points." << std::endl;
     std::cout << "Using all available points from 2-hop neighborhoods." << std::endl;

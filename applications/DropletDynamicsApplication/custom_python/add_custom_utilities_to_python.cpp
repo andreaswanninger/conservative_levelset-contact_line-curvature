@@ -29,6 +29,10 @@
 #include "custom_utilities/intersection_points_utility.h"  // Include for IntersectionPointsUtility
 #include "droplet_dynamics_application_variables.h"  // Include for IntersectionPointData
 
+// Aw 9.4: include the curvature fitting calculation utility; tells the compiler to use this class from the corresponding header file
+#include "custom_utilities/curvature_fitting_utility.h"
+
+
 
 namespace Kratos {
 namespace Python {
@@ -66,6 +70,29 @@ void AddCustomUtilitiesToPython(pybind11::module& m)
         .def_static("DiagnosticOutput", &KratosDropletDynamics::IntersectionPointsUtility::DiagnosticOutput)
         .def_static("ProcessIntersectionPointsAndFitCurves", &KratosDropletDynamics::IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurves)
         .def_static("ProcessIntersectionPointsAndFitCurvesparabola", &KratosDropletDynamics::IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola);
+
+    
+    // AW 9.4: makes it callable from python
+    py::class_<KratosDropletDynamics::CurvatureFittingUtility>(m, "CurvatureFittingUtility")
+    .def_static(
+        "ComputeFittedCurvatures",
+        &KratosDropletDynamics::CurvatureFittingUtility::ComputeFittedCurvatures,
+        py::arg("parabola_filename"),
+        py::arg("circle_filename"),
+        py::arg("intersection_points_filename"),
+        py::arg("output_csv") = "element_curvatures_simplified.csv"
+    )
+    .def_static(
+        "LoadCurvatureCSV",
+        &KratosDropletDynamics::CurvatureFittingUtility::LoadCurvatureCSV,
+        py::arg("csv_filename")
+    )
+    .def_static(
+        "GetFittedParabolaCurvature",
+        &KratosDropletDynamics::CurvatureFittingUtility::GetFittedParabolaCurvature,
+        py::arg("element_id")
+    );
+
 
 }
 

@@ -15,6 +15,9 @@
 #include "../../FluidDynamicsApplication/custom_utilities/two_fluid_navier_stokes_data.h"
 #define PI 3.14159265358979
 
+// AW 9.4: necessary include
+#include "custom_utilities/curvature_fitting_utility.h"
+
 namespace Kratos
 {
 
@@ -2211,6 +2214,9 @@ void DropletDynamicsElement<TElementData>::CalculateCurvatureOnInterfaceGaussPoi
     }
 }
 
+// AW 9.4
+using namespace KratosDropletDynamics;
+// AW 9.4: updated to use fitted curvatures
 template <class TElementData>
 void DropletDynamicsElement<TElementData>::SurfaceTension(
     const double SurfaceTensionCoefficient,
@@ -2220,22 +2226,33 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     const std::vector<array_1d<double,3>>& rInterfaceNormalsNeg,
     VectorType& rRHS)
 {
-    // The external interfacial force (per unit area) will be integrated along with the surface tension
-    // At the moment, it can be constant for the cut element
+    // The external interfacial force (per unit area)
     const Vector external_int_force = this->GetValue(EXT_INT_FORCE);
 
+    const std::size_t element_id = this->Id();
+
+    // Try to use fitted curvature from CSV
+    const double fitted_curvature = CurvatureFittingUtility::GetFittedParabolaCurvature(element_id);
+
     for (unsigned int intgp = 0; intgp < rInterfaceWeights.size(); ++intgp){
-        const double intgp_curv = rCurvature(intgp);
+        // AW 9.4: comment this line to use unfitted curvature
+        const double intgp_curv = std::isnan(fitted_curvature) ? rCurvature(intgp) : fitted_curvature;
+        // AW 9.4: uncomment this line to use unfitted curvature
+        // const double intgp_curv = rCurvature(intgp);
         const double intgp_w = rInterfaceWeights(intgp);
         const auto& intgp_normal = rInterfaceNormalsNeg[intgp];
+
         for (unsigned int i = 0; i < NumNodes; ++i){
-            for (unsigned int dim = 0; dim < NumNodes-1; ++dim){
-                rRHS[ i*(NumNodes) + dim ] += ( -SurfaceTensionCoefficient*intgp_curv*intgp_normal[dim]
-                    + external_int_force[dim] )*intgp_w*rInterfaceShapeFunctions(intgp,i);
+            for (unsigned int dim = 0; dim < NumNodes - 1; ++dim){
+                rRHS[i * NumNodes + dim] += (
+                    -SurfaceTensionCoefficient * intgp_curv * intgp_normal[dim]
+                    + external_int_force[dim]
+                ) * intgp_w * rInterfaceShapeFunctions(intgp, i);
             }
         }
     }
 }
+
 
 template <class TElementData>
 void DropletDynamicsElement<TElementData>::SurfaceTension(
