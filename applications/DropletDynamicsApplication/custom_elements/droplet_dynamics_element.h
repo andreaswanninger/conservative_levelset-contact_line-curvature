@@ -541,7 +541,9 @@ private:
         const Vector& rInterfaceWeights,
         const Matrix& rInterfaceShapeFunctions,
         const std::vector<array_1d<double,3>>& rInterfaceNormalsNeg,
-        VectorType& rRHS);
+        VectorType& rRHS,
+        // AW 10.4: pass the current time
+        const double current_time);
 
     /**
      * @brief Computes the surface tension on the interface and implement its effect on the RHS vector
@@ -619,7 +621,10 @@ private:
         const double micro_length_scale,
         const std::vector<Vector>& rCLWeights,
         const std::vector<Matrix>& rCLShapeFunctions,
-        const std::vector<Vector>& rTangential);
+        const std::vector<Vector>& rTangential,
+        // AW 10.4: pass this to allow writing files specifying the current time
+        const double current_time
+    );
 
     ///@}
     ///@name Private  Access

@@ -32,6 +32,9 @@
 // Aw 9.4: include the curvature fitting calculation utility; tells the compiler to use this class from the corresponding header file
 #include "custom_utilities/curvature_fitting_utility.h"
 
+// AW 10.4: include the normal computation utility
+#include "custom_utilities/normal_computation_utility.h"
+
 
 
 namespace Kratos {
@@ -92,6 +95,28 @@ void AddCustomUtilitiesToPython(pybind11::module& m)
         &KratosDropletDynamics::CurvatureFittingUtility::GetFittedParabolaCurvature,
         py::arg("element_id")
     );
+
+    // AW 10.4: makes it callable from Python
+    py::class_<KratosDropletDynamics::NormalComputationUtility>(m, "NormalComputationUtility")
+    .def_static(
+        "ComputeAveragedNormals",
+        &KratosDropletDynamics::NormalComputationUtility::ComputeAveragedNormals,
+        py::arg("parabola_file"),
+        py::arg("intersection_file"),
+        py::arg("output_csv") = "averaged_normals.csv"
+    )
+    .def_static(
+        "LoadNormalCSV",
+        &KratosDropletDynamics::NormalComputationUtility::LoadNormalCSV,
+        py::arg("csv_filename")
+    )
+    .def_static(
+        "GetFittedNormal",
+        &KratosDropletDynamics::NormalComputationUtility::GetFittedNormal,
+        py::arg("element_id"),
+        py::return_value_policy::reference  // return by reference to avoid copies
+    );
+    
 
 
 }

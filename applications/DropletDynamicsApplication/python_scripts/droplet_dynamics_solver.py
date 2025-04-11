@@ -9,6 +9,9 @@ import KratosMultiphysics.FluidDynamicsApplication as KratosCFD
 import KratosMultiphysics.DropletDynamicsApplication as KratosDroplet
 import numpy as np
 
+# AW 10.4: necessary for csv file writing
+import os
+
 # Import base class file
 #from KratosMultiphysics.FluidDynamicsApplication.fluid_solver import FluidSolver
 #from KratosMultiphysics.FluidDynamicsApplication.navier_stokes_two_fluids_solver import NavierStokesTwoFluidsSolver
@@ -180,6 +183,26 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         #    self.settings["distance_reading_settings"]["distance_file_name"].SetString(self.settings["model_import_settings"]["input_filename"].GetString()+".post.res")
 
         KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Construction of NavierStokesTwoFluidsSolver finished.")
+
+        # AW 10.4: create csv files
+        # Define output CSV paths (could also be moved to settings if desired)
+        self._curvature_csv_unfitted = "unfitted_curvature.csv"
+        self._curvature_csv_fitted = "fitted_curvature.csv"
+        self._normals_csv_unfitted = "unfitted_normals.csv"
+        self._normals_csv_fitted = "fitted_normals.csv"
+
+        # Create headers (overwrite on init)
+        with open(self._curvature_csv_unfitted, "w") as f:
+            f.write("Time,Element_ID,GaussPoint,UnfittedCurvature\n")
+
+        with open(self._curvature_csv_fitted, "w") as f:
+            f.write("Time,Element_ID,FittedCurvature\n")
+
+        with open(self._normals_csv_unfitted, "w") as f:
+            f.write("Time,Element_ID,GaussPoint,Nx,Ny,Nz\n")
+
+        with open(self._normals_csv_fitted, "w") as f:
+            f.write("Time,Element_ID,Nx,Ny,Nz\n")
 
 
     def AddDofs(self):
@@ -378,6 +401,18 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         )
 
         KratosDroplet.CurvatureFittingUtility.LoadCurvatureCSV("element_curvatures_simplified.csv")
+
+         # AW 10.4: Ensure averaged normals file is cleared before writing
+        open("averaged_normals.csv", "w").close()
+
+        # AW 10.4: Compute fitted normals and write to file
+        from KratosMultiphysics.DropletDynamicsApplication import NormalComputationUtility
+        NormalComputationUtility.ComputeAveragedNormals(
+            "element_curves_parabola.txt",
+            "intersection_points.txt",
+            "averaged_normals.csv"
+        )
+        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Averaged normals computed and saved.")
 
 
     

@@ -283,6 +283,8 @@ void Triangle2D3ModifiedShapeFunctions::ComputeInterfaceNegativeSideShapeFunctio
                                                  p_matrix,
                                                  IntegrationMethod);
 
+                KRATOS_INFO("bullshit also") << std::endl;
+
                 rContactLineNegativeSideShapeFunctionsValues.push_back(contact_line_negative_side_shape_function_values);
                 rContactLineNegativeSideShapeFunctionsGradientsValues.push_back(contact_line_negative_side_shape_function_gradient_values);
                 rContactLineNegativeSideWeightsValues.push_back(contact_line_negative_side_weight_values);

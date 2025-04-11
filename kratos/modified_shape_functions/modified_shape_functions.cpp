@@ -581,6 +581,9 @@ namespace Kratos
         const Matrix &rPmatrix,
         const IntegrationMethodType IntegrationMethod) {
 
+        // AW 11.4
+        KRATOS_INFO("bullshit in function beginning") << std::endl;   
+
         // Set some auxiliar variables
         GeometryPointerType p_input_geometry = this->GetInputGeometry();                                     // Pointer to the input geometry
         const unsigned int n_nodes = p_input_geometry->PointsNumber();                                       // Split geometry number of nodes
@@ -682,6 +685,8 @@ namespace Kratos
                 rInterfaceShapeFunctionsGradientsValues[i_interface*n_int_pts + i_gauss] = trans(aux_grad_sh_func_cond);
             }
         }
+        // AW 11.4
+        KRATOS_INFO("bullshit in function end") << std::endl;   
     };
 
     void ModifiedShapeFunctions::ComputeFaceValuesOnOneSide(
@@ -852,18 +857,25 @@ namespace Kratos
             std::cout << std::endl;
         }
 
-        for (unsigned int i_gauss = 0; i_gauss < n_int_pts; ++i_gauss) {
-            Vector gradient_sum = ZeroVector(n_dim);
-    
-            for (unsigned int i_node = 0; i_node < n_nodes; ++i_node) {
-                for (unsigned int d = 0; d < n_dim; ++d) {
-                    gradient_sum[d] += rInterfaceShapeFunctionsGradientsValues[i_gauss](i_node, d);
-                }
-            }
+        // AW 11.4
+        KRATOS_INFO("compute face values: end of function reached") << std::endl;
 
-            std::cout << "Gradient sum at integration point " << i_gauss << ": " << gradient_sum << std::endl;
-        } 
+        // for (unsigned int i_gauss = 0; i_gauss < n_int_pts; ++i_gauss) {
+        //     Vector gradient_sum = ZeroVector(n_dim);
+
+        //     // AW 11.4
+        //     KRATOS_INFO("compute face values loop over gauss points, number of int points: ") << n_int_pts << std::endl;
+    
+        //     for (unsigned int i_node = 0; i_node < n_nodes; ++i_node) {
+        //         for (unsigned int d = 0; d < n_dim; ++d) {
+        //             gradient_sum[d] += rInterfaceShapeFunctionsGradientsValues[i_gauss](i_node, d);
+        //         }
+        //     }
+
+        //     std::cout << "Gradient sum at integration point " << i_gauss << ": " << gradient_sum << std::endl;
+        // } 
         ////////
+        
 
     };
 

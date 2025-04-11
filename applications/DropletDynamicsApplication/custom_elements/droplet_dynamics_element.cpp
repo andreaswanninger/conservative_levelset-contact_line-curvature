@@ -17,6 +17,10 @@
 
 // AW 9.4: necessary include
 #include "custom_utilities/curvature_fitting_utility.h"
+// AW 10.4: necessary include
+#include "custom_utilities/normal_computation_utility.h"
+#include <fstream>  // for std::ofstream
+#include <iomanip>  // for std::setprecision
 
 namespace Kratos
 {
@@ -325,7 +329,9 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
 
                 // Surface tension is by default ON for droplet dynamics application
                 /* if (rCurrentProcessInfo[SURFACE_TENSION]) {*/
-
+                    // AW 10.4: get current time
+                    const double current_time = rCurrentProcessInfo[TIME];
+                    
                     AddSurfaceTensionContribution(
                         data,
                         int_shape_function,
@@ -346,7 +352,10 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
                         micro_length_scale,
                         contact_gauss_pts_weights,
                         contact_shape_function_neg,
-                        contact_tangential_neg);
+                        contact_tangential_neg,
+                        // AW 10.4: pass current time
+                        current_time                    
+                    );
 
                 /*}  else{
                     // Without pressure gradient stabilization, volume ratio is checked during condensation
@@ -2149,6 +2158,8 @@ void DropletDynamicsElement<TElementData>::ComputeSplitInterface(
         rContactTangentialsNeg[dim] = rContactTangentialsNeg[dim]/tangent_norm;
     } */
 
+        // AW 11.4
+        KRATOS_INFO("bullshit before") << std::endl;
     //if (rHasContactLine){ // HERE: HAS CONTACT LINE == contact_line_indices.size() > 0: no need for an explicit check
                           // ELSEWHERE: HAS CONTACT LINE == rContactWeightsNeg.size() > 0
         // Call the Contact Line negative side shape functions calculator
@@ -2158,6 +2169,9 @@ void DropletDynamicsElement<TElementData>::ComputeSplitInterface(
             rContactShapeDerivativesNeg,
             rContactWeightsNeg,
             GeometryData::IntegrationMethod::GI_GAUSS_2);
+        
+            // AW 11.4
+        KRATOS_INFO("bullshit after") << std::endl;
 }
 
 // template <>
@@ -2224,28 +2238,102 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     const Vector& rInterfaceWeights,
     const Matrix& rInterfaceShapeFunctions,
     const std::vector<array_1d<double,3>>& rInterfaceNormalsNeg,
-    VectorType& rRHS)
+    VectorType& rRHS,
+    // AW 10.4: pass the current time
+    const double current_time)
 {
     // The external interfacial force (per unit area)
     const Vector external_int_force = this->GetValue(EXT_INT_FORCE);
 
     const std::size_t element_id = this->Id();
 
-    // Try to use fitted curvature from CSV
+    // AW 10.4: Toggle between fitted and unfitted values
+    bool use_fitted_curvature = true;
+    bool use_fitted_normal = true;
+
+    // AW 9.4: use fitted curvature from CSV
     const double fitted_curvature = CurvatureFittingUtility::GetFittedParabolaCurvature(element_id);
 
-    for (unsigned int intgp = 0; intgp < rInterfaceWeights.size(); ++intgp){
-        // AW 9.4: comment this line to use unfitted curvature
-        const double intgp_curv = std::isnan(fitted_curvature) ? rCurvature(intgp) : fitted_curvature;
-        // AW 9.4: uncomment this line to use unfitted curvature
-        // const double intgp_curv = rCurvature(intgp);
-        const double intgp_w = rInterfaceWeights(intgp);
-        const auto& intgp_normal = rInterfaceNormalsNeg[intgp];
+    // AW 10.4: enforce using unfitted curvature if fitted normal not found
+    if (std::isnan(fitted_curvature)) {
+        use_fitted_curvature = false;
+        KRATOS_WARNING("SurfaceTension") << "No fitted curvature found for element " << element_id << ". Falling back to unfitted curvature." << std::endl;
+    }
 
+    // AW 10.4: use fitted normal from csv
+    Kratos::KratosDropletDynamics::NormalComputationUtility::LoadNormalCSV("averaged_normals.csv");
+    const array_1d<double,3>& fitted_normal =
+    Kratos::KratosDropletDynamics::NormalComputationUtility::GetFittedNormal(element_id);
+
+    // AW 10.4: enforce using unfitted normal if fitted normal not found
+    if (fitted_normal == ZeroVector(3)) {
+        use_fitted_normal = false;
+        KRATOS_WARNING("SurfaceTension") << "No fitted normal found for element " << element_id << ". Falling back to unfitted normal." << std::endl;
+    }
+    
+
+    // AW 10.4: Open CSVs in append mode
+    std::ofstream unfitted_curv_file("unfitted_curvature.csv", std::ios::app);
+    std::ofstream fitted_curv_file("fitted_curvature.csv", std::ios::app);
+    std::ofstream unfitted_normal_file("unfitted_normals.csv", std::ios::app);
+    std::ofstream fitted_normal_file("fitted_normals.csv", std::ios::app);
+
+    // AW 10.4: Write fitted values once per element
+    fitted_curv_file << std::setprecision(12)
+        << current_time << "," << element_id << "," << fitted_curvature << "\n";
+    
+    fitted_normal_file << std::setprecision(12)
+        << current_time << "," << element_id << ","
+        << fitted_normal[0] << "," << fitted_normal[1] << "," << fitted_normal[2] << "\n";
+
+    for (unsigned int intgp = 0; intgp < rInterfaceWeights.size(); ++intgp){
+        // Extract unfitted values
+        const double unfitted_curv = rCurvature(intgp);
+        const array_1d<double, 3>& unfitted_normal = rInterfaceNormalsNeg[intgp];
+    
+        // Select curvature and normal based on toggles
+        const double curvature_to_use = use_fitted_curvature ? fitted_curvature : unfitted_curv;
+        const array_1d<double, 3>& normal_to_use = use_fitted_normal ? fitted_normal : unfitted_normal;
+    
+        const double intgp_w = rInterfaceWeights(intgp);
+
+        // AW 10.4 Write unfitted values
+        // Write unfitted curvature (with GP number)
+        unfitted_curv_file << std::setprecision(12)
+        << current_time << "," << element_id << "," << intgp << "," << unfitted_curv << "\n";
+
+        // Write unfitted normal (with GP number)
+        unfitted_normal_file << std::setprecision(12)
+            << current_time << "," << element_id << "," << intgp << ","
+            << unfitted_normal[0] << "," << unfitted_normal[1] << "," << unfitted_normal[2] << "\n";
+
+    
+        // === Print block ===
+        /* KRATOS_INFO("SurfaceTension") << "Element " << this->Id() << ", Gauss Point " << intgp << ":" << std::endl;
+        KRATOS_INFO("SurfaceTension") << "  Unfitted Curvature: " << unfitted_curv << std::endl;
+        KRATOS_INFO("SurfaceTension") << "  Fitted Curvature:   " << fitted_curvature << std::endl;
+        KRATOS_INFO("SurfaceTension") << "  --> Using " << (use_fitted_curvature ? "fitted" : "unfitted") << " curvature = " << curvature_to_use << std::endl;
+    
+        KRATOS_INFO("SurfaceTension") << "  Unfitted Normal: ("
+            << unfitted_normal[0] << ", "
+            << unfitted_normal[1] << ", "
+            << unfitted_normal[2] << ")" << std::endl;
+    
+        KRATOS_INFO("SurfaceTension") << "  Fitted Normal:   ("
+            << fitted_normal[0] << ", "
+            << fitted_normal[1] << ", "
+            << fitted_normal[2] << ")" << std::endl;
+    
+        KRATOS_INFO("SurfaceTension") << "  --> Using " << (use_fitted_normal ? "fitted" : "unfitted") << " normal: ("
+            << normal_to_use[0] << ", "
+            << normal_to_use[1] << ", "
+            << normal_to_use[2] << ")" << std::endl; */
+    
+        // === Force assembly ===
         for (unsigned int i = 0; i < NumNodes; ++i){
             for (unsigned int dim = 0; dim < NumNodes - 1; ++dim){
                 rRHS[i * NumNodes + dim] += (
-                    -SurfaceTensionCoefficient * intgp_curv * intgp_normal[dim]
+                    -SurfaceTensionCoefficient * curvature_to_use * normal_to_use[dim]
                     + external_int_force[dim]
                 ) * intgp_w * rInterfaceShapeFunctions(intgp, i);
             }
@@ -2716,7 +2804,9 @@ void DropletDynamicsElement<TElementData>::AddSurfaceTensionContribution(
     const double micro_length_scale, 
     const std::vector<Kratos::Vector>& rCLWeights,
     const std::vector<Matrix>& rCLShapeFunctions,
-    const std::vector<Vector>& rTangential)
+    const std::vector<Vector>& rTangential,
+    // AW 10.4: pass the current time
+    const double current_time )
 {
     // Surface tension coefficient is set in material properties
     const double surface_tension_coefficient = this->GetProperties().GetValue(SURFACE_TENSION_COEFFICIENT);
@@ -2733,7 +2823,9 @@ void DropletDynamicsElement<TElementData>::AddSurfaceTensionContribution(
         rInterfaceWeights,
         rInterfaceShapeFunction,
         rInterfaceNormalsNeg,
-        rRightHandSideVector);  
+        rRightHandSideVector,
+        // AW 10.4: pass the current time
+        current_time);  
           
     SurfaceTension(
         rData,
