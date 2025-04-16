@@ -27,48 +27,70 @@ namespace KratosDropletDynamics {
 
 double CurvatureFittingUtility::ComputeParabolaCurvature(double a, double b, double x)
 {
+    // compute the first derivative of the polynomial
     const double dx = 2.0 * a * x + b;
+    // computes the denominator of the curvature formula
     const double denom = std::pow(1.0 + dx * dx, 1.5);
+    // Uses ternary operator to avoid division by zero
     return denom != 0.0 ? std::abs(2.0 * a) / denom : 0.0;
 }
 
 // AW 15.4: new method added to compute curvature from rotated fitting
+// Idea: compute curvature from the fitted parabola in rotated space, defined as  x=ay2+by+c
 double CurvatureFittingUtility::ComputeRotatedParabolaCurvature(double a, double b, double y)
 {
+    // compute the first derivative of the polynomial
     const double dx_dy = 2.0 * a * y + b;
+    // computes the denominator of the curvature formula
     const double denom = std::pow(1.0 + dx_dy * dx_dy, 1.5);
+    // Uses ternary operator to avoid division by zero
     return denom != 0.0 ? std::abs(2.0 * a) / denom : 0.0;
 }
 
+// computes curvature of a circle, which is straightforward knowing the radius
 double CurvatureFittingUtility::ComputeRadiusCurvature(double radius)
 {
     return radius != 0.0 ? 1.0 / radius : std::numeric_limits<double>::infinity();
 }
 
 void CurvatureFittingUtility::ComputeFittedCurvatures(
+    // the file containing the fitted parabola coefficients per element id
     const std::string& rParabolaFilename,
+    // the file containing the fitted circle coefficients per element id
     const std::string& rCircleFilename,
+    // the file containing the intersection points per element id
     const std::string& rIntersectionFilename,
-    // AW 15.4: additionally use these input files for neighbouring points
+    // AW 15.4: new file containing the original neighbours (depending on the chosen neighbourhood depth) per element id
     const std::string& rOriginalNeighboursFileName,
+    // AW 15.4: new file containing the rotated neighbours (depending on the chosen neighbourhood depth) per element id
     const std::string& rRotatedNeighboursFileName,
+    // the (to be filled) output file containing the curvature per element id
     const std::string& rOutputCSV)
 {   
+    // Usage of hash maps to store key-element combinations (facilitates fast look-up)
+    // this map stores the elemental x-values per element id
     std::unordered_map<int, std::vector<double>> element_x_values;
-    // AW 15.4: new map needed to also compute with rotated fitting
+    // AW 15.4: this stores the intersection points per element id
     std::unordered_map<int, std::pair<std::pair<double, double>, std::pair<double, double>>> intersection_map; 
+    // this map stores the average x-value per element id
     std::unordered_map<int, double> avg_x_map;
     // AW 15.4: new maps needed for the neighbouring (original + rotated) points
+    // this map stores the rotated neighbours (depending on the chosen neighbourhood depth) per element id
     std::unordered_map<int, std::vector<std::pair<double, double>>> rotated_neighbors;
+    // this map stores the original neighbours (depending on the chosen neighbourhood depth) per element id
     std::unordered_map<int, std::vector<std::pair<double, double>>> original_neighbors;
 
     // AW 15.4
     // --- Read element_points_rotated.txt ---
     {
+        // read from the corresponding file line by line
         std::ifstream file(rRotatedNeighboursFileName);
         std::string line;
+        // read each line from the file at once 
         while (std::getline(file, line)) {
+            // Wrap the line in a stringstream to easily extract individual fields
             std::stringstream ss(line);
+            // extract element id, as well as x,y coordinates from the current line
             int id;
             double x, y;
             ss >> id >> x >> y;
@@ -78,6 +100,7 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
 
     // --- Read element_points_original.txt ---
     {
+        // (see comments for prior reading)
         std::ifstream file(rOriginalNeighboursFileName);
         std::string line;
         while (std::getline(file, line)) {
@@ -85,45 +108,46 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
             int id;
             double x, y;
             ss >> id >> x >> y;
-            original_neighbors[id].emplace_back(x, y);
+            original_neighbors[id].emplace_back(x, y); // x is first because we fit y = f(x)
         }
     }
 
 
     // === Read intersection_points.txt ===
     {
+        // std::ifstream is used to read from file line by line
         std::ifstream file(rIntersectionFilename);
         std::string line;
-        std::getline(file, line); // Skip header
+        std::getline(file, line); // Skip header by disregarding first line
         
-        // AW 15.4: new code block for rotated fitting
+        // AW 15.4: changed due to rotational fitting consideration
+        // Loop through all remaining lines in the file — each line corresponds to one intersection point on an element
         while (std::getline(file, line)) {
+            // Prepare to split the line using tab characters (\t) by putting it into a std::stringstream
             std::stringstream ss(line);
             std::string token;
+            // extracts first character, converts it to integer and stores
             std::getline(ss, token, '\t'); int element_id = std::stoi(token);
-            std::getline(ss, token, '\t'); int point_id;
+            // AW 16.4: changed to first convert before assigning point id 
+            std::getline(ss, token, '\t'); int point_id = std::stoi(token);
+            // for coordinates, conversion into double
             std::getline(ss, token, '\t'); double x = std::stod(token);
             std::getline(ss, token, '\t'); double y = std::stod(token);
+            // skips the z-coordinate for this (2d) problem
             std::getline(ss, token, '\t'); // z
-
+            
+            // store elemental id and corresponding x-coordinate
             element_x_values[element_id].push_back(x);
+            // store x,y coordinates in the intersection map, depending on which of the intersection points per element it is
             if (point_id == 1)
                 intersection_map[element_id].second = std::make_pair(x, y);
             else
                 intersection_map[element_id].first = std::make_pair(x, y);
         }
-        // AW 15.4: old code block, outcommented
-        /* while (std::getline(file, line)) {
-            std::stringstream ss(line);
-            std::string token;
-            std::getline(ss, token, '\t'); int element_id = std::stoi(token);
-            std::getline(ss, token, '\t'); // point_id
-            std::getline(ss, token, '\t'); double x = std::stod(token);
-            // Skip Y, Z
-            element_x_values[element_id].push_back(x);
-        } */
 
+        // Loop over all elements that had intersection points
         for (const auto& [id, x_vals] : element_x_values) {
+            // Compute and store the average x-coordinate of the intersection points for each element in the avg_x_map
             double sum = 0.0;
             for (double x : x_vals) sum += x;
             avg_x_map[id] = sum / x_vals.size();
@@ -131,20 +155,24 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
     }
 
     // AW 15.4: new block, incl rotated fitting
-    // === Read element_curves_parabola.txt ===
+    //  Maps element_id → (a, b) for the parabola equation
     std::unordered_map<int, std::pair<double, double>> parabola_coeffs;
+    // Stores whether each element had a coordinate rotation applied during fitting
     std::unordered_map<int, bool> is_rotated_map;
+    // For rotated elements, stores the coefficients (a, b) of the rotated parabola fit 
     std::unordered_map<int, std::pair<double, double>> rotated_coeffs;
+    // These maps store the minimum y value and y range of the rotated coordinates, which were used to rescale the rotated points to [0, 1] during fitting
     std::unordered_map<int, double> rotated_y_min_map;
     std::unordered_map<int, double> rotated_y_range_map;
 
-
+    // === Read element_curves_parabola.txt ===
     {
         std::ifstream file(rParabolaFilename);
         std::string line;
         std::getline(file, line); // Header
 
         // Parse column indices
+        // Builds a header_map that maps column names like "a(x^2)", "Element_ID", etc. to their column indices. This makes the code robust to column order
         std::unordered_map<std::string, int> header_map;
         std::stringstream header_stream(line);
         std::string token;
@@ -153,21 +181,25 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
             header_map[token] = idx++;
         }
 
+        // Reads each line and splits it by tabs into a fields vector
         while (std::getline(file, line)) {
             std::stringstream ss(line);
             std::vector<std::string> fields;
             while (std::getline(ss, token, '\t')) {
                 fields.push_back(token);
             }
-
+            
+            // Parses values from the line based on the header map
             int element_id = std::stoi(fields[header_map["Element_ID"]]);
             bool rotated = std::stoi(fields[header_map["Rotated"]]) == 1;
             double a = std::stod(fields[header_map["a(x^2)"]]);
             double b = std::stod(fields[header_map["b(x)"]]);
-
+            
+            // Adds (a, b) and rotation flag to the appropriate maps
             parabola_coeffs[element_id] = std::make_pair(a, b);
             is_rotated_map[element_id] = rotated;
 
+            // If this element used rotated fitting, it stores additional information
             if (rotated) {
                 double rot_a = std::stod(fields[header_map["rot_a"]]);
                 double rot_b = std::stod(fields[header_map["rot_b"]]);
@@ -180,45 +212,15 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
         }
     }
 
-
-    // AW 15.4: old block, outcommented
-    /* // === Read element_curves_parabola.txt ===
-    std::unordered_map<int, std::pair<double, double>> parabola_coeffs;
-
-    {
-        std::ifstream file(rParabolaFilename);
-        std::string line;
-        std::getline(file, line); // Header
-
-        // Figure out column indices from header
-        std::unordered_map<std::string, int> header_map;
-        std::stringstream header_stream(line);
-        std::string token;
-        int idx = 0;
-        while (std::getline(header_stream, token, '\t')) {
-            header_map[token] = idx++;
-        }
-
-        while (std::getline(file, line)) {
-            std::stringstream ss(line);
-            std::vector<std::string> fields;
-            while (std::getline(ss, token, '\t')) {
-                fields.push_back(token);
-            }
-            int element_id = std::stoi(fields[header_map["Element_ID"]]);
-            double a = std::stod(fields[header_map["a(x²)"]]);
-            double b = std::stod(fields[header_map["b(x)"]]);
-            parabola_coeffs[element_id] = std::make_pair(a, b);
-        }
-    } */
-
     // === Read element_curves.txt ===
+    // Declares a hash map that stores the radius of the circle fitted to each element
     std::unordered_map<int, double> radius_map;
     {
         std::ifstream file(rCircleFilename);
         std::string line;
         std::getline(file, line); // Header
 
+        // builds header map (see comments in prior block)
         std::unordered_map<std::string, int> header_map;
         std::stringstream header_stream(line);
         std::string token;
@@ -227,6 +229,7 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
             header_map[token] = idx++;
         }
 
+        // stores necessary information per element
         while (std::getline(file, line)) {
             std::stringstream ss(line);
             std::vector<std::string> fields;
@@ -240,48 +243,68 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
     }
 
     // === Write output file ===
+    //  Opens the output file stream (given by rOutputCSV) to write results into
     std::ofstream out(rOutputCSV);
+    // writes floats in fixed point notation and uses high precision
     out << std::fixed << std::setprecision(12);
+    // writes the header line of the csv file
     out << "Element_ID,X,kappa_parabola,kappa_radius\n";
 
-    // AW 15.4: allows using the neighbours for original, unrotaed points or not
+    // AW 15.4: allows using the neighbours for original, unrotated points or not
     const bool use_original_neighbors = false;
 
+    // loops over each element id and its corresponding x values of the intersection points
     for (const auto& [id, x_vals] : element_x_values) {
+        // start with undefined curvature (nan); updated if available;
+        // idea: trace back which curvatures could not be updated in case nan appears in csv file
         double kp = std::numeric_limits<double>::quiet_NaN();
         double kr = std::numeric_limits<double>::quiet_NaN();
-    
-        if (parabola_coeffs.count(id)) {
-            double sum_kappa = 0.0;
         
+        // initial check if the current element has parabola coefficients
+        if (parabola_coeffs.count(id)) {
+            // Initializes an accumulator to sum all computed curvature values
+            double sum_kappa = 0.0;
+            
+            // checks if current elements is rotated, contains the rotated coefficients and rotated neighbours
             if (is_rotated_map.count(id) && is_rotated_map[id] && rotated_neighbors.count(id)) {
+                // gets the coefficients and neighbours from the prior defined map
                 const auto& [rot_a, rot_b] = rotated_coeffs[id];
                 const auto& points = rotated_neighbors[id];
-        
+                
+                // Debug print: confirms which element is being processed, how many neighbor points are used, and shows the fitted coefficients
                 std::cout << "\n[DEBUG] Element " << id << " is ROTATED (using " << points.size() << " rotated neighbor points)" << std::endl;
                 std::cout << "  rot_a: " << rot_a << ", rot_b: " << rot_b << std::endl;
-        
+                
+                // for each rotated point, retrieves the y coordinate and computes the curvature at this point
                 for (std::size_t j = 0; j < points.size(); ++j) {
                     double y_rot = points[j].first;
                     double kappa = ComputeRotatedParabolaCurvature(rot_a, rot_b, y_rot);
+                    // accumulates the curvature values over all neighbouring points
                     sum_kappa += kappa;
-        
+                    
+                    // Debug message to give back the curvature at all considered points
                     std::cout << "    [j=" << j << "] y_rot: " << y_rot << ", kappa: " << kappa << std::endl;
                 }
-        
+                
+                // computes the average curvature over all neighbouring points
                 kp = sum_kappa / points.size();
+                // gives back the average computed curvature from the rotated coefficients
                 std::cout << "  --> Averaged ROTATED curvature: " << kp << std::endl;
         
             } 
+            // preliminary check if the current element has the (original, unrotated) neighbours stored
             else if (original_neighbors.count(id)) {
+                // retrieves the computed coefficients
                 const auto& [a, b] = parabola_coeffs[id];
-            
+                
+                // in case it is desired to compute the curvature on these points using also the neighbouring values
                 if (use_original_neighbors) {
                     // === Using ORIGINAL neighbor points ===
                     const auto& points = original_neighbors[id];
                     std::cout << "\n[DEBUG] Element " << id << " is NON-ROTATED (using " << points.size() << " original neighbor points)" << std::endl;
                     std::cout << "  a: " << a << ", b: " << b << std::endl;
-            
+                    
+                    // see comments prior block
                     for (std::size_t i = 0; i < points.size(); ++i) {
                         double x = points[i].first;
                         double kappa = ComputeParabolaCurvature(a, b, x);
@@ -292,7 +315,11 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
             
                     kp = sum_kappa / points.size();
                     std::cout << "  --> Averaged NON-ROTATED curvature (with neighbors): " << kp << std::endl;
-                } else if (element_x_values.count(id) && element_x_values[id].size() == 2) {
+                } 
+                // in case curvature shall only be evaluated between intersection points, do this:
+                // Do not use neighbors;
+                // Instead, check that there are exactly 2 x-values (from intersection points)
+                else if (element_x_values.count(id) && element_x_values[id].size() == 2) {
                     // === Fallback: interpolate between intersection points ===
                     double num_points = 100.0;
                     double x1 = element_x_values[id][0];
@@ -316,12 +343,14 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
             }
         }
         
-    
+        // for the spherical fit based curvature computation, check if the radius is available for the current element id
         if (radius_map.count(id)) {
             kr = ComputeRadiusCurvature(radius_map[id]);
         }
     
-        // Average x
+        // Average x;
+        // Compute the average x-position of the intersection points (typically 2 per element)
+        // this gives a representative x-coordinate for plotting the curvature later
         double x_avg = 0.0;
         for (double x : x_vals) x_avg += x;
         x_avg /= x_vals.size();
@@ -342,6 +371,8 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
     std::cout << "[CurvatureFittingUtility] Curvature computation complete. Output written to " << rOutputCSV << std::endl;
 }
 
+// static class member declaration that maps the computed curvature from the parabola to the element id
+// map provides fast (c++ level) access without having to read the csv over and over again (only once per time step needed)
 std::unordered_map<std::size_t, double> CurvatureFittingUtility::mParabolaCurvatureByElement;
 
 void CurvatureFittingUtility::LoadCurvatureCSV(const std::string& rCSVFile)
