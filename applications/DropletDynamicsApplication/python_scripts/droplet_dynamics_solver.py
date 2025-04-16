@@ -397,6 +397,9 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             "element_curves_parabola.txt",
             "element_curves.txt",
             "intersection_points.txt",
+            # AW 15.4: new input files
+            "element_points_original.txt",
+            "element_points_rotated.txt",
             "element_curvatures_simplified.csv"
         )
 
@@ -413,6 +416,10 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             "averaged_normals.csv"
         )
         KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Averaged normals computed and saved.")
+
+        # AW 11.4: Load fitted normals once per time step
+        NormalComputationUtility.LoadNormalCSV("averaged_normals.csv")
+        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Averaged normals loaded.")
 
 
     

@@ -33,6 +33,9 @@ public:
         const std::string& rParabolaFilename,
         const std::string& rCircleFilename,
         const std::string& rIntersectionFilename,
+        // AW 15.4: additionally use these input files for neighbouring points
+        const std::string& rOriginalNeighboursFileName,
+        const std::string& rRotatedNeighboursFileName,
         const std::string& rOutputCSV = "element_curvatures_simplified.csv");
 
     static void LoadCurvatureCSV(const std::string& rCSVFile);
@@ -41,6 +44,8 @@ public:
 private:
     static double ComputeParabolaCurvature(double a, double b, double x);
     static double ComputeRadiusCurvature(double radius);
+    // AW 15.4: new method for the rotated fitting
+    static double ComputeRotatedParabolaCurvature(double a, double b, double y);
 
     // Prior MISSING STATIC MEMBER DECLARATION
     static std::unordered_map<std::size_t, double> mParabolaCurvatureByElement;

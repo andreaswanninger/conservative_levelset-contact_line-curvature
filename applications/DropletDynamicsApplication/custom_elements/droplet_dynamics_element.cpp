@@ -2249,19 +2249,25 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
 
     // AW 10.4: Toggle between fitted and unfitted values
     bool use_fitted_curvature = true;
-    bool use_fitted_normal = true;
+    bool use_fitted_normal = false;
+
+    
 
     // AW 9.4: use fitted curvature from CSV
     const double fitted_curvature = CurvatureFittingUtility::GetFittedParabolaCurvature(element_id);
 
-    // AW 10.4: enforce using unfitted curvature if fitted normal not found
-    if (std::isnan(fitted_curvature)) {
+     // AW 15.4: only allow fitted curvature for a specific list of elements
+     static const std::unordered_set<int> fitted_element_ids = {
+        57, 58, 59, 197, 199, 200, 313, 314, 320, 450, 453, 456
+    };
+
+    // AW 15.4: enforce using unfitted curvature 
+    if (std::isnan(fitted_curvature) || fitted_element_ids.find(element_id) == fitted_element_ids.end()) {
         use_fitted_curvature = false;
-        KRATOS_WARNING("SurfaceTension") << "No fitted curvature found for element " << element_id << ". Falling back to unfitted curvature." << std::endl;
+        KRATOS_WARNING("SurfaceTension") << "Fitted curvature not available or not allowed for element " << element_id << ". Falling back to unfitted curvature." << std::endl;
     }
 
-    // AW 10.4: use fitted normal from csv
-    Kratos::KratosDropletDynamics::NormalComputationUtility::LoadNormalCSV("averaged_normals.csv");
+    // AW 11.4: modified to not load csv for every element
     const array_1d<double,3>& fitted_normal =
     Kratos::KratosDropletDynamics::NormalComputationUtility::GetFittedNormal(element_id);
 

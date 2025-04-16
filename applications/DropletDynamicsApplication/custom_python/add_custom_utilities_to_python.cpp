@@ -83,6 +83,9 @@ void AddCustomUtilitiesToPython(pybind11::module& m)
         py::arg("parabola_filename"),
         py::arg("circle_filename"),
         py::arg("intersection_points_filename"),
+         // AW 15.4: additional files added
+        py::arg("original_neighbours_filename"),
+        py::arg("rotated_neighbours_filename"),
         py::arg("output_csv") = "element_curvatures_simplified.csv"
     )
     .def_static(
