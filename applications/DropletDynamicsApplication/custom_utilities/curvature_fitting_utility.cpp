@@ -234,7 +234,7 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
     // writes floats in fixed point notation and uses high precision
     out << std::fixed << std::setprecision(12);
     // writes the header line of the csv file
-    out << "Element_ID,X,kappa_parabola,kappa_radius\n";
+    out << "Element_ID,X,kappa_parabola,kappa_radius,Rotated\n";
 
     // AW 15.4: allows using the neighbours for original, unrotated points or not
     const bool use_original_neighbors = false;
@@ -433,7 +433,7 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
                   << " | Rotated: " << (is_rotated_map[id] ? "yes" : "no")
                   << " | Averaged kappa_parabola: " << kp << std::endl;
     
-        out << id << "," << x_avg << "," << kp << "," << kr << "\n";
+        out << id << "," << x_avg << "," << kp << "," << kr << "," << (is_rotated_map.count(id) && is_rotated_map[id] ? 1 : 0) << "\n";
     }
     
 
@@ -444,6 +444,8 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
 // static class member declaration that maps the computed curvature from the parabola to the element id
 // map provides fast (c++ level) access without having to read the csv over and over again (only once per time step needed)
 std::unordered_map<std::size_t, double> CurvatureFittingUtility::mParabolaCurvatureByElement;
+std::unordered_map<std::size_t, bool> CurvatureFittingUtility::mElementWasRotated;
+
 
 void CurvatureFittingUtility::LoadCurvatureCSV(const std::string& rCSVFile)
 {
@@ -459,16 +461,22 @@ void CurvatureFittingUtility::LoadCurvatureCSV(const std::string& rCSVFile)
         std::getline(ss, token, ','); std::size_t elem_id = std::stoul(token);
         std::getline(ss, token, ','); /* x */
         std::getline(ss, token, ','); double kappa_parabola = std::stod(token);
+        std::getline(ss, token, ','); bool is_rotated = (token == "1");
         mParabolaCurvatureByElement[elem_id] = kappa_parabola;
+        mElementWasRotated[elem_id] = is_rotated;
     }
 }
 
-double CurvatureFittingUtility::GetFittedParabolaCurvature(std::size_t ElementId)
+std::pair<double, bool> CurvatureFittingUtility::GetFittedParabolaCurvature(std::size_t ElementId)
 {
-    auto it = mParabolaCurvatureByElement.find(ElementId);
-    if (it != mParabolaCurvatureByElement.end())
-        return it->second;
-    return std::numeric_limits<double>::quiet_NaN(); // fallback if not found
+    auto it_curv = mParabolaCurvatureByElement.find(ElementId);
+    auto it_rot = mElementWasRotated.find(ElementId);
+
+    if (it_curv != mParabolaCurvatureByElement.end() && it_rot != mElementWasRotated.end()) {
+        return {it_curv->second, it_rot->second};
+    }
+
+    return {std::numeric_limits<double>::quiet_NaN(), false};
 }
 
 

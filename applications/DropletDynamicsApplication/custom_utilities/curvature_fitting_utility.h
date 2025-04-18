@@ -39,7 +39,7 @@ public:
         const std::string& rOutputCSV = "element_curvatures_simplified.csv");
 
     static void LoadCurvatureCSV(const std::string& rCSVFile);
-    static double GetFittedParabolaCurvature(std::size_t ElementId);
+    static std::pair<double, bool> GetFittedParabolaCurvature(std::size_t ElementId);
 
 private:
     static double ComputeParabolaCurvature(double a, double b, double x);
@@ -49,6 +49,7 @@ private:
 
     // Prior MISSING STATIC MEMBER DECLARATION
     static std::unordered_map<std::size_t, double> mParabolaCurvatureByElement;
+    static std::unordered_map<std::size_t, bool> mElementWasRotated;
 };
 
 } // namespace KratosDropletDynamics

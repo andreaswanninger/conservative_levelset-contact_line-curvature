@@ -2251,21 +2251,24 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     bool use_fitted_curvature = true;
     bool use_fitted_normal = false;
 
-    
+    auto curvature_pair = CurvatureFittingUtility::GetFittedParabolaCurvature(element_id);
+    const double fitted_curvature = curvature_pair.first;
+    const bool is_rotated = curvature_pair.second;
 
-    // AW 9.4: use fitted curvature from CSV
-    const double fitted_curvature = CurvatureFittingUtility::GetFittedParabolaCurvature(element_id);
-
-     // AW 15.4: only allow fitted curvature for a specific list of elements
+  /*    // AW 15.4: only allow fitted curvature for a specific list of elements
      static const std::unordered_set<int> fitted_element_ids = {
         57, 58, 59, 197, 199, 200, 313, 314, 320, 450, 453, 456
-    };
+    }; */
 
-    // AW 15.4: enforce using unfitted curvature 
-    if (std::isnan(fitted_curvature) || fitted_element_ids.find(element_id) == fitted_element_ids.end()) {
+    // AW 18.4: only use fitted curvature if it is defined AND the element was rotated
+    if (std::isnan(fitted_curvature) || !is_rotated) {
         use_fitted_curvature = false;
-        KRATOS_WARNING("SurfaceTension") << "Fitted curvature not available or not allowed for element " << element_id << ". Falling back to unfitted curvature." << std::endl;
+        KRATOS_WARNING("SurfaceTension") << "Fitted curvature not used for element " << element_id 
+                                        << ". Reason: " 
+                                        << (std::isnan(fitted_curvature) ? "NaN" : "element was NOT rotated") 
+                                        << ". Falling back to unfitted curvature." << std::endl;
     }
+
 
     // AW 11.4: modified to not load csv for every element
     const array_1d<double,3>& fitted_normal =
