@@ -31,6 +31,7 @@ namespace KratosDropletDynamics
         static void ComputeAveragedNormals(
             const std::string& parabola_file,
             const std::string& intersection_file,
+            const std::string& rotated_points_file,
             const std::string& output_csv);
 
         static void LoadNormalCSV(const std::string& csv_filename);

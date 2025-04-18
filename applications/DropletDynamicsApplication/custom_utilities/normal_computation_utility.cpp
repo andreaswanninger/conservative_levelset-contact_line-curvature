@@ -43,14 +43,19 @@ struct Point
 void NormalComputationUtility::ComputeAveragedNormals(
     const std::string& parabola_file,
     const std::string& intersection_file,
+    const std::string& rotated_points_file,
     const std::string& output_csv)
 {
     std::map<int, Coefficients> curve_map;
     // AW 15.4: additionally needed maps for the rotated fitting
     std::map<int, bool> rotated_flag;
-    std::map<int, std::pair<double, double>> rotated_ab;
+    // AW 18.4: delete nl
+    // std::map<int, std::pair<double, double>> rotated_ab;
     std::map<int, std::pair<Point, Point>> intersection_map;
+    // AW 18.4: added, as rotated points needed for normal computation
+    std::map<int, std::vector<Point>> rotated_points;
 
+    // === Read element_curves_parabola.txt ===
     // AW 15.4: new reading block to also consider rotated fitting
     std::ifstream infile1(parabola_file);
     std::string line;
@@ -75,37 +80,13 @@ void NormalComputationUtility::ComputeAveragedNormals(
         double a = std::stod(fields[header_map["a(x^2)"]]);
         double b = std::stod(fields[header_map["b(x)"]]);
         double c = std::stod(fields[header_map["c"]]);
-        curve_map[elem_id] = {a, b, c};
-
         bool rotated = std::stoi(fields[header_map["Rotated"]]) == 1;
-        rotated_flag[elem_id] = rotated;
 
-        if (rotated) {
-            double rot_a = std::stod(fields[header_map["rot_a"]]);
-            double rot_b = std::stod(fields[header_map["rot_b"]]);
-            rotated_ab[elem_id] = {rot_a, rot_b};
-        }
+        curve_map[elem_id] = {a, b, c};
+        rotated_flag[elem_id] = rotated;
     }
 
-    // Load parabola coefficients
-    /* std::ifstream infile1(parabola_file);
-    std::string line;
-    std::getline(infile1, line); // skip header
-    while (std::getline(infile1, line))
-    {
-        std::istringstream iss(line);
-        int elem_id;
-        double a, b, c;
-        std::string temp;
-        std::getline(iss, temp, '\t'); elem_id = std::stoi(temp);
-        for (int i = 0; i < 2; ++i) std::getline(iss, temp, '\t'); // skip 2 columns
-        std::getline(iss, temp, '\t'); a = std::stod(temp);
-        std::getline(iss, temp, '\t'); b = std::stod(temp);
-        std::getline(iss, temp, '\t'); c = std::stod(temp);
-        curve_map[elem_id] = {a, b, c};
-    } */
-
-    // Load intersection points
+    // === Read intersection_points.txt ===
     std::ifstream infile2(intersection_file);
     std::getline(infile2, line); // Skip header line
 
@@ -135,9 +116,39 @@ void NormalComputationUtility::ComputeAveragedNormals(
             intersection_map[elem_id].first = {x, y};
     }
 
-    // Open output CSV
+    // === Read rotated_points_file ===
+    std::ifstream infile3(rotated_points_file);
+    while (std::getline(infile3, line)) {
+        std::istringstream iss(line);
+        int elem_id;
+        double x_rot, y_rot;
+        iss >> elem_id >> x_rot >> y_rot;
+        rotated_points[elem_id].push_back({x_rot, y_rot});
+    }
+
+    // === Write averaged normals to CSV ===
     std::ofstream outfile(output_csv);
     outfile << "Element_ID,Avg_Nx,Avg_Ny\n";
+
+    // AW 18.4: added this part to decide on outward direction for arbitrary topologies
+    // === Compute global midpoint of all interface segments ===
+    double sum_x = 0.0, sum_y = 0.0;
+    int count = 0;
+
+    for (const auto& [elem_id, endpoints] : intersection_map) {
+        const auto& [p1, p2] = endpoints;
+        double xm = 0.5 * (p1.x + p2.x);
+        double ym = 0.5 * (p1.y + p2.y);
+        sum_x += xm;
+        sum_y += ym;
+        count++;
+    }
+
+    Point global_center = {0.0, 0.0};
+    if (count > 0) {
+        global_center.x = sum_x / count;
+        global_center.y = sum_y / count;
+    }
 
     // AW 15.4: new code block to also consider rotated fitting
     for (const auto& [elem_id, coeffs] : curve_map)
@@ -146,27 +157,33 @@ void NormalComputationUtility::ComputeAveragedNormals(
             continue;
 
         const auto& [p1, p2] = intersection_map[elem_id];
-
-        // Use midpoint for a robust and meaningful result
         double avg_nx = 0.0;
         double avg_ny = 0.0;
 
         if (rotated_flag.count(elem_id) && rotated_flag[elem_id]) {
-            // === ROTATED FIT ===
-            double y_center = 0.5; // Optional: improve later using real rotated y
-            const auto& [ra, rb] = rotated_ab[elem_id];
+            // === ROTATED CASE ===
+            const auto& points = rotated_points[elem_id];
 
-            // Compute rotated-space derivative dx/dy
-            double dx_dy = 2.0 * ra * y_center + rb;
+            if (points.empty()) continue;
 
-            // Rotated-space normal: (1, -dx_dy)
+            // Use midpoint in rotated y-space
+            double y_min = points.front().y;
+            double y_max = points.front().y;
+            for (const auto& pt : points) {
+                y_min = std::min(y_min, pt.y);
+                y_max = std::max(y_max, pt.y);
+            }
+            double y_center = 0.5 * (y_min + y_max);
+
+            // Compute normal in rotated space (x = a y^2 + b y + c)
+            double dx_dy = 2.0 * coeffs.a * y_center + coeffs.b;
             double nx_rot = 1.0;
             double ny_rot = -dx_dy;
             double norm_rot = std::sqrt(nx_rot * nx_rot + ny_rot * ny_rot);
             nx_rot /= norm_rot;
             ny_rot /= norm_rot;
 
-            // Rotate back to original system (45° CCW)
+            // Rotate normal back to original frame (inverse 45°)
             const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
             avg_nx = inv_sqrt2 * (nx_rot - ny_rot);
             avg_ny = inv_sqrt2 * (nx_rot + ny_rot);
@@ -180,7 +197,19 @@ void NormalComputationUtility::ComputeAveragedNormals(
             avg_ny = 1.0 / norm;
         }
 
-        // Final normalization (optional, for safety)
+        // === Ensure outward orientation using dot product with vector from global center ===
+        double xm = 0.5 * (p1.x + p2.x);
+        double ym = 0.5 * (p1.y + p2.y);
+        double vx = xm - global_center.x;
+        double vy = ym - global_center.y;
+        double dot = vx * avg_nx + vy * avg_ny;
+        // if the dot product is negative, the normal is pointing in the wrong direction, and we flip it
+        if (dot < 0.0) {
+            avg_nx *= -1.0;
+            avg_ny *= -1.0;
+        }
+
+        // Normalize
         double len = std::sqrt(avg_nx * avg_nx + avg_ny * avg_ny);
         if (len > 1e-12) {
             avg_nx /= len;
@@ -191,43 +220,6 @@ void NormalComputationUtility::ComputeAveragedNormals(
         outfile << elem_id << "," << std::setprecision(12) << avg_nx << "," << avg_ny << "\n";
     }
 
-    // AW 15.4: old code block, commented
-    /* for (const auto& [elem_id, coeffs] : curve_map)
-    {   
-        if (intersection_map.find(elem_id) == intersection_map.end())
-            continue;
-
-        const auto& [p1, p2] = intersection_map[elem_id];
-
-        // Use midpoint for a robust and meaningful result
-        double x_mid = 0.5 * (p1.x + p2.x);
-        double dydx = 2.0 * coeffs.a * x_mid + coeffs.b;
-        double norm = std::sqrt(1.0 + dydx * dydx);
-
-        double avg_nx = -dydx / norm;
-        double avg_ny = 1.0 / norm;
-
-        // Optional: normalize the average vector
-        double len = std::sqrt(avg_nx * avg_nx + avg_ny * avg_ny);
-        if (len > 1e-12) {
-            avg_nx /= len;
-            avg_ny /= len;
-        }
-
-          // === Debug prints ===
-         std::cout << "Element ID: " << elem_id << std::endl;
-        std::cout << "  Coefficients: a = " << coeffs.a << ", b = " << coeffs.b << ", c = " << coeffs.c << std::endl;
-        std::cout << "  Intersection Points: x1 = " << p1.x << ", x2 = " << p2.x << std::endl;
-        std::cout << "  Midpoint x = " << x_mid << std::endl;
-        std::cout << "  Derivative f'(x) = " << dydx << std::endl;
-        std::cout << "  Raw normal (not yet normalized): (" << -dydx << ", 1.0)" << std::endl;
-        std::cout << "  Normalized normal: (" << avg_nx << ", " << avg_ny << ")" << std::endl;
-        std::cout << std::endl; 
-
-        outfile << elem_id << "," << std::setprecision(12) << avg_nx << "," << avg_ny << "\n";
-    } */
-
-    // std::cout << "Averaged normals written to " << output_csv << std::endl;
 }
 
 // === NEW ===

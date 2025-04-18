@@ -414,6 +414,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         NormalComputationUtility.ComputeAveragedNormals(
             "element_curves_parabola.txt",
             "intersection_points.txt",
+            "element_points_rotated.txt",
             "averaged_normals.csv"
         )
         KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Averaged normals computed and saved.")

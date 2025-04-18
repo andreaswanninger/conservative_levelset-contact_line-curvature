@@ -106,6 +106,7 @@ void AddCustomUtilitiesToPython(pybind11::module& m)
         &KratosDropletDynamics::NormalComputationUtility::ComputeAveragedNormals,
         py::arg("parabola_file"),
         py::arg("intersection_file"),
+        py::arg("rotated_points_file"),
         py::arg("output_csv") = "averaged_normals.csv"
     )
     .def_static(
