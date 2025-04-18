@@ -11,7 +11,6 @@
 //
 
 // AW 9.4: added utility for curvature computation
-
 #include "curvature_fitting_utility.h"
 
 #include <fstream>
@@ -70,6 +69,8 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
     // Usage of hash maps to store key-element combinations (facilitates fast look-up)
     // this map stores the elemental x-values per element id
     std::unordered_map<int, std::vector<double>> element_x_values;
+    // AW 18.4: this map stores the elemental y-values per element id
+    std::unordered_map<int, std::vector<double>> element_y_values;
     // AW 15.4: this stores the intersection points per element id
     std::unordered_map<int, std::pair<std::pair<double, double>, std::pair<double, double>>> intersection_map; 
     // this map stores the average x-value per element id
@@ -138,6 +139,7 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
             
             // store elemental id and corresponding x-coordinate
             element_x_values[element_id].push_back(x);
+            element_y_values[element_id].push_back(y);
             // store x,y coordinates in the intersection map, depending on which of the intersection points per element it is
             if (point_id == 1)
                 intersection_map[element_id].second = std::make_pair(x, y);
@@ -159,11 +161,6 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
     std::unordered_map<int, std::pair<double, double>> parabola_coeffs;
     // Stores whether each element had a coordinate rotation applied during fitting
     std::unordered_map<int, bool> is_rotated_map;
-    // For rotated elements, stores the coefficients (a, b) of the rotated parabola fit 
-    std::unordered_map<int, std::pair<double, double>> rotated_coeffs;
-    // These maps store the minimum y value and y range of the rotated coordinates, which were used to rescale the rotated points to [0, 1] during fitting
-    std::unordered_map<int, double> rotated_y_min_map;
-    std::unordered_map<int, double> rotated_y_range_map;
 
     // === Read element_curves_parabola.txt ===
     {
@@ -198,17 +195,6 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
             // Adds (a, b) and rotation flag to the appropriate maps
             parabola_coeffs[element_id] = std::make_pair(a, b);
             is_rotated_map[element_id] = rotated;
-
-            // If this element used rotated fitting, it stores additional information
-            if (rotated) {
-                double rot_a = std::stod(fields[header_map["rot_a"]]);
-                double rot_b = std::stod(fields[header_map["rot_b"]]);
-                rotated_coeffs[element_id] = std::make_pair(rot_a, rot_b);
-                double rot_ymin = std::stod(fields[header_map["rot_ymin"]]);
-                double rot_yrange = std::stod(fields[header_map["rot_yrange"]]);
-                rotated_y_min_map[element_id] = rot_ymin;
-                rotated_y_range_map[element_id] = rot_yrange;
-            }
         }
     }
 
@@ -252,6 +238,10 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
 
     // AW 15.4: allows using the neighbours for original, unrotated points or not
     const bool use_original_neighbors = false;
+    const bool use_rotated_neighbors = true;
+    // AW 18.4: allows either computing the curvature only on the input points (true), or additionally on n points in between
+    const bool interpolate_curvature_on_original_points_only = true;
+    const bool interpolate_curvature_on_rotated_points_only = true;
 
     // loops over each element id and its corresponding x values of the intersection points
     for (const auto& [id, x_vals] : element_x_values) {
@@ -264,84 +254,163 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
         if (parabola_coeffs.count(id)) {
             // Initializes an accumulator to sum all computed curvature values
             double sum_kappa = 0.0;
+            const auto& [a, b] = parabola_coeffs[id];
             
-            // checks if current elements is rotated, contains the rotated coefficients and rotated neighbours
-            if (is_rotated_map.count(id) && is_rotated_map[id] && rotated_neighbors.count(id)) {
-                // gets the coefficients and neighbours from the prior defined map
-                const auto& [rot_a, rot_b] = rotated_coeffs[id];
+            if (is_rotated_map.count(id) && is_rotated_map[id]) {
                 const auto& points = rotated_neighbors[id];
-                
-                // Debug print: confirms which element is being processed, how many neighbor points are used, and shows the fitted coefficients
-                std::cout << "\n[DEBUG] Element " << id << " is ROTATED (using " << points.size() << " rotated neighbor points)" << std::endl;
-                std::cout << "  rot_a: " << rot_a << ", rot_b: " << rot_b << std::endl;
-                
-                // for each rotated point, retrieves the y coordinate and computes the curvature at this point
-                for (std::size_t j = 0; j < points.size(); ++j) {
-                    double y_rot = points[j].first;
-                    double kappa = ComputeRotatedParabolaCurvature(rot_a, rot_b, y_rot);
-                    // accumulates the curvature values over all neighbouring points
-                    sum_kappa += kappa;
-                    
-                    // Debug message to give back the curvature at all considered points
-                    std::cout << "    [j=" << j << "] y_rot: " << y_rot << ", kappa: " << kappa << std::endl;
-                }
-                
-                // computes the average curvature over all neighbouring points
-                kp = sum_kappa / points.size();
-                // gives back the average computed curvature from the rotated coefficients
-                std::cout << "  --> Averaged ROTATED curvature: " << kp << std::endl;
-        
-            } 
-            // preliminary check if the current element has the (original, unrotated) neighbours stored
-            else if (original_neighbors.count(id)) {
-                // retrieves the computed coefficients
-                const auto& [a, b] = parabola_coeffs[id];
-                
-                // in case it is desired to compute the curvature on these points using also the neighbouring values
-                if (use_original_neighbors) {
-                    // === Using ORIGINAL neighbor points ===
-                    const auto& points = original_neighbors[id];
-                    std::cout << "\n[DEBUG] Element " << id << " is NON-ROTATED (using " << points.size() << " original neighbor points)" << std::endl;
-                    std::cout << "  a: " << a << ", b: " << b << std::endl;
-                    
-                    // see comments prior block
-                    for (std::size_t i = 0; i < points.size(); ++i) {
-                        double x = points[i].first;
-                        double kappa = ComputeParabolaCurvature(a, b, x);
-                        sum_kappa += kappa;
             
-                        std::cout << "    [i=" << i << "] x: " << x << ", kappa: " << kappa << std::endl;
+                std::cout << "\n[DEBUG] Element " << id << " is ROTATED" << std::endl;
+                std::cout << "  rot_a: " << a << ", rot_b: " << b << std::endl;
+            
+                if (use_rotated_neighbors) {
+                    if (interpolate_curvature_on_rotated_points_only) {
+                        // === Option 1: Compute directly on rotated neighbor points ===
+                        for (std::size_t j = 0; j < points.size(); ++j) {
+                            double y_rot = points[j].first;
+                            double kappa = ComputeRotatedParabolaCurvature(a, b, y_rot);
+                            sum_kappa += kappa;
+            
+                            std::cout << "    [j=" << j << "] y_rot: " << y_rot << ", kappa: " << kappa << std::endl;
+                        }
+                        kp = sum_kappa / points.size();
+                        std::cout << "  --> Averaged ROTATED curvature (with neighbors): " << kp << std::endl;
+                    } else {
+                        // === Option 2: Interpolate between all consecutive neighbor points ===
+                        const int num_interp_points = 100;
+                        int count = 0;
+            
+                        for (std::size_t j = 1; j < points.size(); ++j) {
+                            double y1 = points[j - 1].first;
+                            double y2 = points[j].first;
+                            double step = (y2 - y1) / (num_interp_points + 1);
+            
+                            for (int k = 1; k <= num_interp_points; ++k) {
+                                double y_interp = y1 + k * step;
+                                double kappa = ComputeRotatedParabolaCurvature(a, b, y_interp);
+                                sum_kappa += kappa;
+                                ++count;
+            
+                                /* std::cout << "    [seg j=" << j << ", k=" << k << "] y: " << y_interp 
+                                          << ", kappa: " << kappa << std::endl; */
+                            }
+                        }
+            
+                        kp = (count > 0) ? (sum_kappa / count) : 0.0;
+                        std::cout << "  --> Averaged ROTATED curvature (interpolated between neighbors): " << kp << std::endl;
                     }
-            
-                    kp = sum_kappa / points.size();
-                    std::cout << "  --> Averaged NON-ROTATED curvature (with neighbors): " << kp << std::endl;
                 } 
-                // in case curvature shall only be evaluated between intersection points, do this:
-                // Do not use neighbors;
-                // Instead, check that there are exactly 2 x-values (from intersection points)
-                else if (element_x_values.count(id) && element_x_values[id].size() == 2) {
-                    // === Fallback: interpolate between intersection points ===
-                    double num_points = 100.0;
-                    double x1 = element_x_values[id][0];
-                    double x2 = element_x_values[id][1];
-                    double step = (x2 - x1) / (num_points + 1);
+                else if (!use_rotated_neighbors) {
+                    double y1 = element_y_values[id][0];
+                    double y2 = element_y_values[id][1];
             
-                    std::cout << "\n[DEBUG] Element " << id << " is NON-ROTATED (interpolating between x1=" << x1 << ", x2=" << x2 << ")" << std::endl;
-                    std::cout << "  a: " << a << ", b: " << b << std::endl;
+                    std::cout << "  --> ROTATED fallback on intersection points: y1 = " << y1 << ", y2 = " << y2 << std::endl;
             
-                    for (int i = 1; i <= num_points; ++i) {
-                        double xi = x1 + i * step;
-                        double kappa = ComputeParabolaCurvature(a, b, xi);
-                        sum_kappa += kappa;
+                    if (interpolate_curvature_on_rotated_points_only) {
+                        double kappa1 = ComputeRotatedParabolaCurvature(a, b, y1);
+                        double kappa2 = ComputeRotatedParabolaCurvature(a, b, y2);
+                        kp = 0.5 * (kappa1 + kappa2);
             
-                        std::cout << "    [i=" << i << "] xi: " << xi << ", kappa: " << kappa << std::endl;
+                        std::cout << "    [Points-only] kappa1: " << kappa1 << ", kappa2: " << kappa2 << std::endl;
+                        std::cout << "  --> Averaged ROTATED curvature (2-point): " << kp << std::endl;
+                    } else {
+                        const int num_points = 100;
+                        double step = (y2 - y1) / (num_points + 1);
+                        sum_kappa = 0.0;
+            
+                        for (int j = 1; j <= num_points; ++j) {
+                            double y_interp = y1 + j * step;
+                            double kappa = ComputeRotatedParabolaCurvature(a, b, y_interp);
+                            sum_kappa += kappa;
+            
+                            std::cout << "    [j=" << j << "] y: " << y_interp << ", kappa: " << kappa << std::endl;
+                        }
+            
+                        kp = sum_kappa / num_points;
+                        std::cout << "  --> Averaged ROTATED curvature (interpolated between intersections): " << kp << std::endl;
                     }
-            
-                    kp = sum_kappa / num_points;
-                    std::cout << "  --> Averaged NON-ROTATED curvature (from intersections): " << kp << std::endl;
                 }
             }
-        }
+            // unrotated case
+            else {
+                std::cout << "Entering unrotated fitting" << std::endl;
+                if (use_original_neighbors) {
+                    const auto& points = original_neighbors[id];
+                    
+                    if (interpolate_curvature_on_original_points_only) {
+                        // === Option 1: Compute directly on neighbor points ===
+                        for (std::size_t i = 0; i < points.size(); ++i) {
+                            double x = points[i].first;
+                            double kappa = ComputeParabolaCurvature(a, b, x);
+                            sum_kappa += kappa;
+                
+                            std::cout << "    [i=" << i << "] x: " << x << ", kappa: " << kappa << std::endl;
+                        }
+                        kp = sum_kappa / points.size();
+                        std::cout << "  --> Averaged NON-ROTATED curvature (with neighbors): " << kp << std::endl;
+                    } else {
+                        // === Option 2: Interpolate between all consecutive neighbor points ===
+                        const int num_interp_points = 100;
+                        int count = 0;
+                
+                        for (std::size_t i = 1; i < points.size(); ++i) {
+                            double x1 = points[i - 1].first;
+                            double x2 = points[i].first;
+                
+                            double step = (x2 - x1) / (num_interp_points + 1);
+                
+                            for (int j = 1; j <= num_interp_points; ++j) {
+                                double xi = x1 + j * step;
+                                double kappa = ComputeParabolaCurvature(a, b, xi);
+                                sum_kappa += kappa;
+                                ++count;
+                
+                                /* std::cout << "    [seg i=" << i << ", j=" << j << "] xi: " << xi 
+                                        << ", kappa: " << kappa << std::endl; */
+                            }
+                        }
+                
+                        kp = (count > 0) ? (sum_kappa / count) : 0.0;
+                        std::cout << "  --> Averaged NON-ROTATED curvature (interpolated between neighbors): " << kp << std::endl;
+                    }
+                    // in case curvature shall only be evaluated between intersection points, do this:
+                    // Do not use neighbors;
+                    // Instead, check that there are exactly 2 x-values (from intersection points)
+                    }   
+                else if (! use_original_neighbors) {
+                    // === Fallback: interpolate between intersection points ===
+                    double x1 = element_x_values[id][0];
+                    double x2 = element_x_values[id][1];
+                
+                    std::cout << "\n[DEBUG] Element " << id << " is NON-ROTATED (interpolating between x1=" << x1 << ", x2=" << x2 << ")" << std::endl;
+                    std::cout << "  a: " << a << ", b: " << b << std::endl;
+                
+                    if (interpolate_curvature_on_original_points_only) {
+                        // === Option 1: Interpolate only on the two intersection points ===
+                        double kappa1 = ComputeParabolaCurvature(a, b, x1);
+                        double kappa2 = ComputeParabolaCurvature(a, b, x2);
+                        kp = 0.5 * (kappa1 + kappa2);
+                    
+                        std::cout << "    [Points-only] kappa1: " << kappa1 << ", kappa2: " << kappa2 << std::endl;
+                        std::cout << "  --> Averaged NON-ROTATED curvature (2-point): " << kp << std::endl;
+                    } else {
+                        // === Option 2: Interpolate on 100 points between the intersections ===
+                        double num_points = 100.0;
+                        double step = (x2 - x1) / (num_points + 1);
+                        double sum_kappa = 0.0;
+                    
+                        for (int i = 1; i <= num_points; ++i) {
+                            double xi = x1 + i * step;
+                            double kappa = ComputeParabolaCurvature(a, b, xi);
+                            sum_kappa += kappa;
+                    
+                            std::cout << "    [i=" << i << "] xi: " << xi << ", kappa: " << kappa << std::endl;
+                        }
+                
+                    kp = sum_kappa / num_points;
+                    std::cout << "  --> Averaged NON-ROTATED curvature (from intersections): " << kp << std::endl;
+                    }
+                }
+            }
         
         // for the spherical fit based curvature computation, check if the radius is available for the current element id
         if (radius_map.count(id)) {
@@ -361,7 +430,7 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
         }
     
         std::cout << "[CurvatureFittingUtility] Element " << id
-                  << " | Rotated: " << (is_rotated_map.count(id) && is_rotated_map[id] ? "yes" : "no")
+                  << " | Rotated: " << (is_rotated_map[id] ? "yes" : "no")
                   << " | Averaged kappa_parabola: " << kp << std::endl;
     
         out << id << "," << x_avg << "," << kp << "," << kr << "\n";
@@ -369,6 +438,7 @@ void CurvatureFittingUtility::ComputeFittedCurvatures(
     
 
     std::cout << "[CurvatureFittingUtility] Curvature computation complete. Output written to " << rOutputCSV << std::endl;
+}
 }
 
 // static class member declaration that maps the computed curvature from the parabola to the element id

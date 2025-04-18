@@ -809,13 +809,18 @@ void IntersectionPointsUtility::ExtractIntersectionPointsFromSplitter(DivideGeom
 //     std::cout << "Saved " << elementFits.size() << " element circle fits to " << output_file << std::endl;
 //     std::cout << "Each element used exactly " << TARGET_POINTS << " points where possible." << std::endl;
 // }
+
+// includes the <iomanip> header which allows manipulators like std::setprecision, which control the number of decimal places for storing the output results in files
 #include <iomanip>  // For std::setprecision
+
 
 void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurves(const std::string& output_file)
 {
-    // Get all intersection points
+    // Get all intersection points 
+    // grabs a reference to the global container g_IntersectionPointsContainer which stores all interface (cut) points
     const auto& points = g_IntersectionPointsContainer;
     
+    // debug message in case the intersection points container is empty
     if (points.empty()) {
         std::cout << "No intersection points available for circle fitting." << std::endl;
         return;
@@ -1104,30 +1109,39 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurves(const std:
     std::cout << "Used all available points from 2-hop neighborhoods." << std::endl;
 }
 
+// method ProcessIntersectionPointsAndFitCurves, a static member function of the IntersectionPointsUtility class
+// only input file: the output file where the intersection points are written into
 void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(const std::string& output_file)
 {
-    // Get all intersection points
+    // Get all intersection points 
+    // grabs a reference to the global container g_IntersectionPointsContainer which stores all interface (cut) points
     const auto& points = g_IntersectionPointsContainer;
     
+    // debug message in case the intersection points container is empty
     if (points.empty()) {
         std::cout << "No intersection points available for curve fitting." << std::endl;
         return;
     }
     
     // Configuration parameters
-    // AW 14.4: neighbourhood expansion changed to 3
-    const int MIN_POINTS_FOR_CURVE_FIT = 3;  // Absolute minimum needed for quadratic
+    // AW 14.4: neighbourhood expansion changed to 6
+    const int MIN_POINTS_FOR_CURVE_FIT = 3;  // Absolute minimum needed for quadratic fit
     const int NEIGHBOR_EXPANSION_LEVEL = 6;   // Expand to n-hop neighbors
     
+    // debug message pointing out the start of the quadratic curve fitting process
     std::cout << "Starting quadratic curve fitting with " << points.size() << " intersection points." << std::endl;
     std::cout << "Using all available points from 2-hop neighborhoods." << std::endl;
     
     // Group points by element
+    // element_points maps element IDs to a list of IntersectionPointData objects
     std::map<int, std::vector<IntersectionPointData>> element_points;
     // Create a map of points by their coordinates
+    // point_to_elements maps each (x, y) coordinate pair to the list of element IDs that contain that point
     std::map<std::pair<double, double>, std::vector<int>> point_to_elements;
     
+    // Iterates over each intersection point in the global container points which contains the intersection points per element
     for (const auto& point : points) {
+        // Get the element ID of the point
         int elemId = point.elementId;
         
         // Round coordinates to handle floating point precision
@@ -1136,19 +1150,24 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
         std::pair<double, double> coord_key(x, y);
         
         // Add this element to the list for this point
+        // reverse map lets us quickly find which elements share a given coordinate
         point_to_elements[coord_key].push_back(elemId);
         
         // Add this point to the element's list
+        // forward map stores this point in the list of intersection points for the current elemen
         element_points[elemId].push_back(point);
     }
     
     // Find element neighbors (elements that share intersection points)
+    // map will hold, for each element ID, the set of neighboring element IDs
     std::map<int, std::set<int>> element_neighbors;
     
+    // Loops over each coordinate key and its corresponding list of element IDs from the reverse map
     for (const auto& [coord, elements] : point_to_elements) {
         // If this point belongs to multiple elements, they are neighbors
         for (size_t i = 0; i < elements.size(); ++i) {
             for (size_t j = i+1; j < elements.size(); ++j) {
+                // Adds a bidirectional connection between the two neighboring elements
                 element_neighbors[elements[i]].insert(elements[j]);
                 element_neighbors[elements[j]].insert(elements[i]);
             }
@@ -1159,20 +1178,25 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
     std::cout << "Expanding neighborhood with " << NEIGHBOR_EXPANSION_LEVEL << " hops..." << std::endl;
     std::map<int, std::set<int>> expanded_neighbors = element_neighbors;
     
+    // This loop performs successive expansions
+    // On each hop, it builds up a larger neighbor set
     for (int hop = 2; hop <= NEIGHBOR_EXPANSION_LEVEL; hop++) {
         std::map<int, std::set<int>> next_level_neighbors = expanded_neighbors;
-        
+        // Loops through all current neighbors of an element
+        // For each such neighbor, it looks up that neighbor’s own neighbors in the original 1-hop element_neighbors
         for (const auto& [elemId, current_neighbors] : expanded_neighbors) {
             for (int neighbor : current_neighbors) {
-                // for (int next_hop : expanded_neighbors[neighbor]) {
+                // Gets the neighbors of that neighbor
                 for (int next_hop : element_neighbors[neighbor]) {
                     if (next_hop != elemId && !expanded_neighbors[elemId].count(next_hop)) {
+                        // If the new neighbor is not already known and isn't the element itself, add it
                         next_level_neighbors[elemId].insert(next_hop);
                     }
                 }
             }
         }
         
+        // Replace the current neighbor set with the expanded one
         expanded_neighbors = next_level_neighbors;
         std::cout << "Completed " << hop << "-hop neighborhood expansion." << std::endl;
     }
@@ -1185,25 +1209,30 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
     };
     
     // Maps to store results
+    // Associates each element ID (int) with its fitted quadratic curve coefficients
     std::map<int, QuadraticCoefficients> elementFits;
+    // Stores the number of total points (original + neighbor) used per element for fitting
     std::map<int, int> elementTotalPoints;
-    // AW 15.4: additional maps needed for storing rotated results
-    // Add at the top with other maps
+    // Stores whether a given element’s curve was fit in rotated coordinates
     std::map<int, bool> elementWasRotated;
-    std::map<int, QuadraticCoefficients> rotatedFitCoeffs;
-    std::map<int, double> rotated_y_min_map;
-    std::map<int, double> rotated_y_range_map;
+    // AW 18.4: added this map to avoid computing the points in several loops; instead, just once per element and store in here
+    // Stores the full set of (x, y) coordinates used for fitting per element (after neighbor expansion)
+    std::map<int, std::vector<std::pair<double, double>>> elementFitPoints;
 
-    
     // Process each element
+    // loop iterates over all elements and their neighbours;
+    // hence, everything within this loop is done for every element
     for (const auto& [elemId, neighbors] : expanded_neighbors) {
-        // Get original points for this element
+        // Retrieve the list of intersection points belonging to this specific element
         std::vector<IntersectionPointData> original_points = element_points[elemId];
+        // also count how many original points this element has, before adding neighbors
         int original_point_count = original_points.size();
         
-        // Create a pool of neighbor points
+        // Create a pool of neighbor points; declares a vector to hold all points from neighboring elements
         std::vector<IntersectionPointData> neighbor_points;
+        // For each neighboring element, access its associated intersection points 
         for (int neighborId : neighbors) {
+            // builds a complete neighborhood point cloud for curve fitting around elemId
             neighbor_points.insert(neighbor_points.end(), 
                                  element_points[neighborId].begin(), 
                                  element_points[neighborId].end());
@@ -1211,17 +1240,15 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
         
         // Remove duplicates and points shared with original set
         std::map<std::pair<double, double>, IntersectionPointData> unique_neighbor_points;
+        // Loop over all previously collected neighboring points
         for (const auto& point : neighbor_points) {
-            // AW 14.4: adapted to remove (potentially) overaggressive rounding 
-            double x = point.coordinates[0];
-            double y = point.coordinates[1];
-            std::pair<double, double> key = std::make_pair(x, y); // AW 14.4: Removed over-aggressive rounding
-            // AW 14.4: next 3 lines are the old lines from alireza, outcommented
-            // double x = std::round(point.coordinates[0] * 1.0E14) / 1.0E14;
-            // double y = std::round(point.coordinates[1] * 1.0E14) / 1.0E14;
-            // std::pair<double, double> key(x, y);
+            // creates a consistent key so that two points that are numerically close but not bitwise identical are treated as the same
+            double x = std::round(point.coordinates[0] * 1.0E14) / 1.0E14;
+            double y = std::round(point.coordinates[1] * 1.0E14) / 1.0E14;
+            std::pair<double, double> key(x, y);
             
             // Skip points that are in the original set
+            // Loop through all original points and round them the same way as the neighbor points for comparison
             bool is_in_original = false;
             for (const auto& orig_point : original_points) {
                 double ox = std::round(orig_point.coordinates[0] * 1.0E14) / 1.0E14;
@@ -1231,285 +1258,221 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
                     is_in_original = true;
                     break;
                 }
-                // AW 14.4: next 4 lines are the old lines from alireza, outcommented
-                // if (ox == x && oy == y) {
-                //    is_in_original = true;
-                //    break;
-                // }
             }
             
+            // If the current neighbor point was not found in the original points (is_in_original == false), we add it to unique_neighbor_points
             if (!is_in_original) {
                 unique_neighbor_points[key] = point;
             }
+        // End of the loop over neighbor_points
         }
         
         // Create a vector of unique neighbor points
+        // now replace the old neighbor_points list with the filtered version
         neighbor_points.clear();
         for (const auto& [_, point] : unique_neighbor_points) {
             neighbor_points.push_back(point);
         }
         
         // Build the set of points for curve fitting
+        // construct the full set of points to be used for curve fitting (starting with the original point set)
         std::vector<IntersectionPointData> combined_points = original_points;
         
         // Add all neighbor points
         combined_points.insert(combined_points.end(), neighbor_points.begin(), neighbor_points.end());
         
+        // Stores how many points came specifically from neighboring elements 
         int points_from_neighbors = neighbor_points.size();
+
+        // AW 18.4: store points in the map per element
+        // Store the raw coordinates used for fitting (before rotation/scaling) for this element
+        // will be overwritten for rotated points
+        std::vector<std::pair<double, double>> fit_coords;
+        for (const auto& point : combined_points) {
+            fit_coords.emplace_back(point.coordinates[0], point.coordinates[1]);
+        }
+        elementFitPoints[elemId] = fit_coords;
+
         
         // Only fit if we have enough points
+        // Before attempting to fit a curve, the code checks if the total number of points
+        // (combined_points, which includes original and neighbor points) is at least the minimum required
         if (combined_points.size() >= MIN_POINTS_FOR_CURVE_FIT) {
+            // debug log indicating how many points are used for the fit, including a breakdown of original vs neighbor points 
             std::cout << "Element " << elemId 
                       << " has " << combined_points.size() 
                       << " points for quadratic fitting (" 
                       << original_point_count << " original + " 
                       << points_from_neighbors << " from neighbors)." << std::endl;
             
-            // AW 14.4: next 8 lines, added rescaling for x coordinates
+            // Initialize x_min, x_max, y_min, and y_max to extreme values to later find the bounding box of all points
             double x_min = std::numeric_limits<double>::max();
             double x_max = -std::numeric_limits<double>::max();
             double y_min = std::numeric_limits<double>::max();
             double y_max = -std::numeric_limits<double>::max();
+
+            // Loop over the combined points to find the minimum and maximum x,y values used later for the scaling
             for (const auto& p : combined_points) {
-                x_min = std::min(x_min, p.coordinates[0]);
-                x_max = std::max(x_max, p.coordinates[0]);
-                y_min = std::min(y_min, p.coordinates[1]);
-                y_max = std::max(y_max, p.coordinates[1]);
+                double x = p.coordinates[0];
+                double y = p.coordinates[1];
+                x_min = std::min(x_min, x);
+                x_max = std::max(x_max, x);
+                y_min = std::min(y_min, y);
+                y_max = std::max(y_max, y);
             }
-            double x_range = x_max - x_min;
-            double y_range = y_max - y_min;
-            if (x_range < 1e-12) x_range = 1.0;
-            if (y_range < 1e-12) y_range = 1.0;
-            
-            // AW 14.4: rotated - flag for coordinate swap
+            // compute this "initial" (in a sense, that it is based on the unrotated points) range;
+            // the initial range is used to determine whether the axes need to be rotated
+            double x_range_initial = x_max - x_min;
+            double y_range_initial = y_max - y_min;
+            // set this tolerance as desired
             double tolerance = 5;
-            bool rotate_axes = (y_range / x_range > tolerance);  // Change to one-way check
+            bool rotate_axes = (y_range_initial / x_range_initial > tolerance);  // Change to one-way check
             if (rotate_axes) {
                 std::cout << "    AW 14.4: Rotating axes for element " << elemId << " due to steep gradient." << std::endl;
             }
+
+            // initialize the inverse of the square root needed for the rotation
+            const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+
+            // AW 18.4: Prepare container for storing the (possibly rotated) coordinates
+            std::vector<std::pair<double, double>> fit_coords;  // declared before this loop
+
+            // in this loop, the actual min and max x,y values for the scaling are computed, depending on whether rotation was done or not
+            for (const auto& p : combined_points) {
+                // first, get the coordinates per point
+                double x = p.coordinates[0];
+                double y = p.coordinates[1];
+
+                if (rotate_axes) {
+                    double x_rot = inv_sqrt2 * (x + y);
+                    double y_rot = inv_sqrt2 * (y - x);
+                    // overwrite the points with the rotated points in case it was rotated
+                    x = x_rot;
+                    y = y_rot;
+                }
+
+                // AW 18.4: store the rotated or unrotated coordinate
+                fit_coords.emplace_back(x, y);
+
+
+                // allows computing the ranges for unrotated and rotated points all in one
+                x_min = std::min(x_min, x);
+                x_max = std::max(x_max, x);
+                y_min = std::min(y_min, y);
+                y_max = std::max(y_max, y);
+            }
+
+            // AW 18.4: finally, store the coordinates per element
+            elementFitPoints[elemId] = fit_coords;
+
+            // Compute the ranges in x and y
+            double x_range = x_max - x_min;
+            double y_range = y_max - y_min;
+            // Clamp small ranges to 1.0 to avoid division by zero or bad scaling in later steps
+            if (x_range < 1e-12) x_range = 1.0;
+            if (y_range < 1e-12) y_range = 1.0;
             
-            // AW 14.4: rotated - scaled matrix assembly
+            
+            // scalar sums required to construct the normal equations matrix and RHS for quadratic fitting
             double sum_x = 0.0, sum_y = 0.0;
             double sum_x2 = 0.0, sum_x3 = 0.0, sum_x4 = 0.0;
             double sum_xy = 0.0, sum_x2y = 0.0;
             
-            for (const auto& point : combined_points) {
-                double x = point.coordinates[0];
-                double y = point.coordinates[1];
-            
-                // AW 14.4: rotated - use rotated (x,y) if needed
-                if (rotate_axes) {
-                    const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
-                    double x_old = x;
-                    double y_old = y;
-                
-                    // 45° clockwise rotation:
-                    x = inv_sqrt2 * (x_old + y_old);
-                    y = inv_sqrt2 * (y_old - x_old);
-                }
-                
-            
+            // AW 18.4: Looping over all points from the current element and its neighbors; already rotated or unrotated!
+            for (const auto& [x, y] : elementFitPoints[elemId]) {
+                // Always compute scaled values after (potential) rotation
                 double x_scaled = (x - x_min) / x_range;
                 double y_scaled = (y - y_min) / y_range;
-                double x2 = x_scaled * x_scaled;
-            
-                sum_x += x_scaled;
-                sum_y += y_scaled;
-                sum_x2 += x2;
-                sum_x3 += x2 * x_scaled;
-                sum_x4 += x2 * x2;
-                sum_xy += x_scaled * y_scaled;
-                sum_x2y += x2 * y_scaled;
-            
-                // AW 14.4: next outcommented block is the old one from alireza, outcommented
-               /*  double x = point.coordinates[0];
-                double y = point.coordinates[1];
+
+                if (!rotate_axes) {
+                    double x2 = x_scaled * x_scaled;
                 
-                double x2 = x * x;
+                    sum_x += x_scaled;
+                    sum_y += y_scaled;
+                    sum_x2 += x2;
+                    sum_x3 += x2 * x_scaled;
+                    sum_x4 += x2 * x2;
+                    sum_xy += x_scaled * y_scaled;
+                    sum_x2y += x2 * y_scaled;
+                } else {
+                    // Fit x = a*y^2 + b*y + c
+                    double y2 = y_scaled * y_scaled;
                 
-                sum_x += x;
-                sum_y += y;
-                sum_x2 += x2;
-                sum_x3 += x2 * x;
-                sum_x4 += x2 * x2;
-                sum_xy += x * y;
-                sum_x2y += x2 * y; */
+                    sum_x += y_scaled;
+                    sum_y += x_scaled;
+                    sum_x2 += y2;
+                    sum_x3 += y2 * y_scaled;
+                    sum_x4 += y2 * y2;
+                    sum_xy += y_scaled * x_scaled;
+                    sum_x2y += y2 * x_scaled;
+                }
+            
             }
             
+            // Stores the number of total points used in the least-squares fitting (original + neighbors)      
             int n = combined_points.size();
 
+            // Declares the matrix A (3×3) and vector b (3×1) that form the system of normal equations
             Matrix3d A;
             Vector3d b;
 
+            // These are the inner products of the basis functions x2,x,1x2,x,1 with themselves, as derived from the least squares minimization min⁡∥Ac⃗−b∥2min∥Ac−b∥2
             A << sum_x4, sum_x3, sum_x2,
                 sum_x3, sum_x2, sum_x,
                 sum_x2, sum_x,  n;
+            // The right-hand side corresponds to the projections of yy onto the basis functions
+            // The right-hand side corresponds to the projections of the dependent variable
+            // onto the basis functions. That is:
+            // - If unrotated: dependent is y, independent is x
+            // - If rotated:   dependent is x, independent is y
 
             b << sum_x2y, sum_xy, sum_y;
 
+            // Solves the linear system
+            // fullPivLu() is a robust LU decomposition with full pivoting from the Eigen library
             Vector3d coeffs = A.fullPivLu().solve(b);
 
-
-            
-            // AW 14.4: old code alireza, outcommented
-            // Set up the system of equations for quadratic fit: y = ax² + bx + c
-            /* Matrix A(3, 3);
-            Vector b(3);
-            
-            A(0, 0) = sum_x4;    A(0, 1) = sum_x3;    A(0, 2) = sum_x2;
-            A(1, 0) = sum_x3;    A(1, 1) = sum_x2;    A(1, 2) = sum_x;
-            A(2, 0) = sum_x2;    A(2, 1) = sum_x;     A(2, 2) = n;
-            
-            b[0] = sum_x2y;
-            b[1] = sum_xy;
-            b[2] = sum_y;
-            
-            // Solve using Cramer's rule
-            double det = A(0, 0) * (A(1, 1) * A(2, 2) - A(2, 1) * A(1, 2)) -
-                         A(0, 1) * (A(1, 0) * A(2, 2) - A(1, 2) * A(2, 0)) +
-                         A(0, 2) * (A(1, 0) * A(2, 1) - A(1, 1) * A(2, 0));
-            
-            Matrix A1 = A, A2 = A, A3 = A;
-            
-            // AW 14.4: sanity check added 
-            if (std::abs(det) < 1e-12) {
-                std::cout << "    WARNING: Ill-conditioned matrix A for element " << elemId << std::endl;
-            }
-            
-            for (int i = 0; i < 3; i++) {
-                A1(i, 0) = b[i];
-                A2(i, 1) = b[i];
-                A3(i, 2) = b[i];
-            }
-            
-            double det1 = A1(0, 0) * (A1(1, 1) * A1(2, 2) - A1(2, 1) * A1(1, 2)) -
-                          A1(0, 1) * (A1(1, 0) * A1(2, 2) - A1(1, 2) * A1(2, 0)) +
-                          A1(0, 2) * (A1(1, 0) * A1(2, 1) - A1(1, 1) * A1(2, 0));
-                          
-            double det2 = A2(0, 0) * (A2(1, 1) * A2(2, 2) - A2(2, 1) * A2(1, 2)) -
-                          A2(0, 1) * (A2(1, 0) * A2(2, 2) - A2(1, 2) * A2(2, 0)) +
-                          A2(0, 2) * (A2(1, 0) * A2(2, 1) - A2(1, 1) * A2(2, 0));
-                          
-            double det3 = A3(0, 0) * (A3(1, 1) * A3(2, 2) - A3(2, 1) * A3(1, 2)) -
-                          A3(0, 1) * (A3(1, 0) * A3(2, 2) - A3(1, 2) * A3(2, 0)) +
-                          A3(0, 2) * (A3(1, 0) * A3(2, 1) - A3(1, 1) * A3(2, 0)); */
-            
-            // Solve for quadratic parameters
+            // declares a variable fit of type QuadraticCoefficients
             QuadraticCoefficients fit;
 
             double a_s = coeffs[0];
             double b_s = coeffs[1];
             double c_s = coeffs[2];
 
-            // AW 14.4: scaled coefficient
-            /* double a_s = det1 / det;
-            double b_s = det2 / det;
-            double c_s = det3 / det; */
-
             // AW 14.4: transform scaled fit back to original coordinate system
+            // handles the case when no rotation was needed; So we simply rescale the fitted coefficients back to the original coordinates
             if (!rotate_axes) {
-                // AW 14.4: normal rescaling path
+                // AW 14.4: transform the polynomial from scaled coordinates back to original
                 fit.a = a_s * y_range / (x_range * x_range);
                 fit.b = (b_s * y_range / x_range) - 2.0 * fit.a * x_min;
                 fit.c = c_s * y_range + y_min - fit.b * x_min - fit.a * x_min * x_min;
 
+                // Saves the unrotated original/neighbor points to a file for debugging or postprocessing    
                 std::ofstream pointOrigFile("element_points_original.txt", std::ios::app);
-            if (pointOrigFile.is_open()) {
-                for (const auto& point : combined_points) {
-                    double x = point.coordinates[0];
-                    double y = point.coordinates[1];
-                    pointOrigFile << elemId << "\t" << x << "\t" << y << "\n";
-                }
-                pointOrigFile.close();
-            } else {
-                std::cerr << "Error: could not open element_points_original.txt" << std::endl;
-            }
-
-            } else {
-                std::cout << "    AW 14.4: Rotating + fitting in rotated space..." << std::endl;
-            
-                // Step 1: Rotate points by 45° clockwise
-                const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
-                std::vector<std::pair<double, double>> rotated_points;
-            
-                for (const auto& point : combined_points) {
-                    double x = point.coordinates[0];
-                    double y = point.coordinates[1];
-            
-                    double x_rot = inv_sqrt2 * (x + y);
-                    double y_rot = inv_sqrt2 * (y - x);
-            
-                    rotated_points.emplace_back(y_rot, x_rot);  // Fit x = f(y) (x_rot = a*y² + b*y + c)
-                }
-            
-                // Step 2: Fit x = a*y² + b*y + c using least squares
-                int N = rotated_points.size();
-                Eigen::MatrixXd M(N, 3);
-                Eigen::VectorXd X(N);
-            
-                for (int i = 0; i < N; ++i) {
-                    double y = rotated_points[i].first;
-                    double x = rotated_points[i].second;
-            
-                    M(i, 0) = y * y;
-                    M(i, 1) = y;
-                    M(i, 2) = 1.0;
-                    X(i) = x;
-                }
-            
-                Eigen::Vector3d coeffs = M.colPivHouseholderQr().solve(X);
-                double a = coeffs(0);
-                double b = coeffs(1);
-                double c = coeffs(2);
-            
-                std::cout << "    AW 14.4: Rotated-space polynomial: x = "
-                          << a << "y² + " << b << "y + " << c << std::endl;
-            
-                // Step 3: Evaluate curvature from x(y) at midpoint
-                double y_min = std::numeric_limits<double>::max();
-                double y_max = -std::numeric_limits<double>::max();
-                for (const auto& p : rotated_points) {
-                    y_min = std::min(y_min, p.first);
-                    y_max = std::max(y_max, p.first);
-                }
-            
-                const double y_center = 0.5 * (y_min + y_max);
-                double dx_dy = 2.0 * a * y_center + b;
-                double d2x_dy2 = 2.0 * a;
-                double curvature = std::abs(d2x_dy2) / std::pow(1.0 + dx_dy * dx_dy, 1.5);
-            
-                // Step 4: Compute rotated-space normal vector
-                double nx_rot = 1.0;
-                double ny_rot = -dx_dy;
-                double norm_rot = std::sqrt(nx_rot * nx_rot + ny_rot * ny_rot);
-                nx_rot /= norm_rot;
-                ny_rot /= norm_rot;
-            
-                // Step 5: Inverse rotate normal vector to original space (45° counter-clockwise)
-                double nx_orig = inv_sqrt2 * (nx_rot - ny_rot);
-                double ny_orig = inv_sqrt2 * (nx_rot + ny_rot);
-            
-                std::cout << "    AW 14.4: Curvature in original space: " << curvature << std::endl;
-                std::cout << "    AW 14.4: Transformed normal (original space): (" 
-                          << nx_orig << ", " << ny_orig << ")" << std::endl;
-            
-                // Optional: assign coefficients if needed for plotting (fit y = ax² + bx + c)
-                fit.a = 0.0;
-                fit.b = 0.0;
-                fit.c = 0.0;
-
-                rotated_y_min_map[elemId] = y_min;
-                rotated_y_range_map[elemId] = y_range;
-
-
-                rotatedFitCoeffs[elemId] = {a, b, c};
-
-                std::ofstream pointFile("element_points_rotated.txt", std::ios::app);
-                if (pointFile.is_open()) {
-                    for (const auto& [y_rot, x_rot] : rotated_points) {
-                        pointFile << elemId << "\t" << x_rot << "\t" << y_rot << "\n";
+                if (pointOrigFile.is_open()) {
+                    for (const auto& point : combined_points) {
+                        double x = point.coordinates[0];
+                        double y = point.coordinates[1];
+                        pointOrigFile << elemId << "\t" << x << "\t" << y << "\n";
                     }
-                    pointFile.close();
+                    pointOrigFile.close();
+                } else {
+                    std::cerr << "Error: could not open element_points_original.txt" << std::endl;
+                }
+            } else {
+                // Rescale polynomial from scaled rotated space (x̃ = a_s*ỹ² + b_s*ỹ + c_s)
+                // to unscaled rotated space (x = a*y² + b*y + c)
+                fit.a = a_s * x_range / (y_range * y_range);
+                fit.b = (b_s * x_range / y_range) - 2.0 * fit.a * y_min;
+                fit.c = c_s * x_range + x_min - fit.b * y_min - fit.a * y_min * y_min;
+
+                // Saves the unrotated original/neighbor points to a file for debugging or postprocessing    
+                std::ofstream pointRotFile("element_points_rotated.txt", std::ios::app);
+                if (pointRotFile.is_open()) {
+                    for (const auto& [x, y] : elementFitPoints[elemId]) {
+                        pointRotFile << elemId << "\t" << x << "\t" << y << "\n";
+                    }
+                    pointRotFile.close();
                 } else {
                     std::cerr << "Error: could not open element_points_rotated.txt" << std::endl;
                 }
@@ -1518,26 +1481,10 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
             // AW 15.4: After computing the final fit per element, store rotation info
             if (!rotate_axes) {
                 elementWasRotated[elemId] = false;
-                rotatedFitCoeffs[elemId] = {0.0, 0.0, 0.0};
             } else {
                 elementWasRotated[elemId] = true;
             }
 
-                   
-            
-            // AW 14.4: old, working code before using rotation
-            // AW 14.4: updated, rescaled coefficient
-            /* fit.a = (a_s / (x_scale * x_scale)) * y_scale;
-            // AW 14.4: old line, alireza, outcommented
-            // fit.a = det1 / det;  // coefficient of x²
-            // AW 14.4: updated, rescaled coefficient
-            fit.b = (b_s / x_scale - 2.0 * x_min * fit.a / y_scale) * y_scale;
-            // AW 14.4: old line, alireza, outcommented
-            // fit.b = det2 / det;  // coefficient of x
-            // AW 14.4: updated, rescaled coefficient
-            fit.c = c_s * y_scale + y_min - fit.b * x_min + fit.a * x_min * x_min;
-            // AW 14.4: old line, alireza, outcommented
-            // fit.c = det3 / det;  // constant term */
             
             // Store results
             elementFits[elemId] = fit;
@@ -1549,37 +1496,36 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
             for (const auto& point : original_points) {
                 double x = point.coordinates[0];
                 double y = point.coordinates[1];
-                
-                // Calculate y value from fitted curve
-                double fitted_y = fit.a * x * x + fit.b * x + fit.c;
-                
-                // Error is the vertical distance between point and curve
-                double error = std::abs(y - fitted_y);
-                total_error += error;
+                if (rotate_axes) {
+                    double x_rot = inv_sqrt2 * (x + y);
+                    double y_rot = inv_sqrt2 * (y - x);
+                    // overwrite the points with the rotated points in case it was rotated
+                    x = x_rot;
+                    y = y_rot;
+
+                    // Calculate x value from fitted curve
+                    double fitted_x = fit.a * y * y + fit.b * y + fit.c;
+                    
+                    // Error is the vertical distance between point and curve
+                    double error = std::abs(x - fitted_x);
+                    total_error += error;}
+                else {
+                    // Calculate x value from fitted curve
+                    double fitted_y = fit.a * x * x + fit.b * x + fit.c;
+                    
+                    // Error is the vertical distance between point and curve
+                    double error = std::abs(y - fitted_y);
+                    total_error += error;
+                }
             }
             
             double avg_error = total_error / (original_points.empty() ? 1.0 : original_points.size());
             
-            std::cout << "Element " << elemId 
-          << " fitted with " << combined_points.size() 
-          << " points: y = " << fit.a
-          << "x² + " << fit.b << "x + " << fit.c
-          << std::endl;
 
             std::cout << "    Average fit error on original points: " << avg_error << std::endl;
 
             // AW 14.4 new: Print all (x, y) pairs and their scaled x
             std::cout << "    Fit points (original and scaled x):" << std::endl;
-
-            for (const auto& point : combined_points) {
-                double x = point.coordinates[0];
-                double y = point.coordinates[1];
-                double x_scaled = (x - x_min) / x_range;
-                double y_scaled = (y - y_min) / y_range;
-                std::cout << "        (" << x << ", " << y 
-                        << "), x_scaled = " << x_scaled
-                        << ", y_scaled = " << y_scaled << std::endl; // AW 14.4
-            }
         } else {
             std::cout << "Element " << elemId 
                       << " has only " << combined_points.size() 
@@ -1598,7 +1544,7 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
     
     // AW 15.4: updated file header
     outFile << "Element_ID\tRotated\tNum_Original_Points\tTotal_Points\t"
-        << "a(x^2)\tb(x)\tc\tavg_error\trot_a\trot_b\trot_c\trot_ymin\trot_yrange\n";
+        << "a(x^2)\tb(x)\tc\tavg_error\n";
     // AW 15.4: old line Alireza, outcommented
     // outFile << "Element_ID\tNum_Original_Points\tTotal_Points\ta(x²)\tb(x)\tc(const)\tavg_error\n";
     
@@ -1611,21 +1557,35 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
         for (const auto& point : element_points[elemId]) {
             double x = point.coordinates[0];
             double y = point.coordinates[1];
-            
-            // Calculate y value from fitted curve
-            double fitted_y = fit.a * x * x + fit.b * x + fit.c;
-            
-            // Error is the vertical distance
-            double error = std::abs(y - fitted_y);
-            total_error += error;
+
+            const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+
+            if (elementWasRotated[elemId]) {
+                double x_rot = inv_sqrt2 * (x + y);
+                double y_rot = inv_sqrt2 * (y - x);
+                // overwrite the points with the rotated points in case it was rotated
+                x = x_rot;
+                y = y_rot;
+
+                // Calculate x value from fitted curve
+                double fitted_x = fit.a * y * y + fit.b * y + fit.c;
+                
+                // Error is the vertical distance between point and curve
+                double error = std::abs(x - fitted_x);
+                total_error += error;
+            } else {
+                // Calculate x value from fitted curve
+                double fitted_y = fit.a * x * x + fit.b * x + fit.c;
+                              
+                // Error is the vertical distance between point and curve
+                double error = std::abs(y - fitted_y);
+                total_error += error;
+            }
         }
         
         double avg_error = total_error / (numPoints > 0 ? numPoints : 1.0);
         // AW 15.4: new input for output file
         bool rotated = elementWasRotated[elemId];
-        const auto& rot_coeffs = rotatedFitCoeffs[elemId];
-        double rot_ymin = rotated_y_min_map.count(elemId) ? rotated_y_min_map[elemId] : 0.0;
-        double rot_yrange = rotated_y_range_map.count(elemId) ? rotated_y_range_map[elemId] : 1.0;
 
         outFile << elemId << "\t"
         << (rotated ? 1 : 0) << "\t"
@@ -1634,22 +1594,7 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
         << fit.a << "\t"
         << fit.b << "\t"
         << fit.c << "\t"
-        << avg_error << "\t"
-        << rot_coeffs.a << "\t"
-        << rot_coeffs.b << "\t"
-        << rot_coeffs.c << "\t"
-        << rot_ymin << "\t"
-        << rot_yrange << "\n";
-
-        
-        // AW 15.4: old lines Alireza, outcommented
-        /* outFile << elemId << "\t" 
-                << numPoints << "\t"
-                << totalPoints << "\t"
-                << fit.a << "\t" 
-                << fit.b << "\t" 
-                << fit.c << "\t"
-                << avg_error << "\n"; */
+        << avg_error << "\n";
     }
     
     outFile.close();

@@ -11,6 +11,7 @@ import numpy as np
 
 # AW 10.4: necessary for csv file writing
 import os
+import pdb
 
 # Import base class file
 #from KratosMultiphysics.FluidDynamicsApplication.fluid_solver import FluidSolver
