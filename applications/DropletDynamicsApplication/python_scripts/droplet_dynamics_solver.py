@@ -28,6 +28,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
     @classmethod
     def GetDefaultParameters(cls):
         ##settings string in json format
+        # AW 21.4: quasistatic contact angle settings added
         default_settings = KratosMultiphysics.Parameters("""
         {
             "solver_type": "two_fluids",
@@ -98,7 +99,13 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 "check_at_each_time_step": true,
                 "avoid_almost_empty_elements": false,
                 "deactivate_full_negative_elements": false
-            }
+            },
+            "QuasiStatic_ContactAngle_Settings": {
+                "QuasiStatic_ContactAngle" : true,                                        
+                "Theta_equilibrium_hydrophilic" : 50,
+                "Theta_equilibrium_hydrophobic" : 130,                                     
+                "Penalty_coefficient" : 100
+            }                                                                                            
         }""")
 
         default_settings.AddMissingParameters(super(DropletDynamicsSolver, cls).GetDefaultParameters())
@@ -192,7 +199,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self._normals_csv_unfitted = "unfitted_normals.csv"
         self._normals_csv_fitted = "fitted_normals.csv"
 
-        # Create headers (overwrite on init)
+        # Create headers (overwrite on init)yy
         with open(self._curvature_csv_unfitted, "w") as f:
             f.write("Time,Element_ID,GaussPoint,UnfittedCurvature\n")
 
@@ -204,6 +211,18 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
 
         with open(self._normals_csv_fitted, "w") as f:
             f.write("Time,Element_ID,Nx,Ny,Nz\n")
+
+        # AW 21.4: Added user-defined quasistationary contact line settings
+        qscl_settings = self.settings["QuasiStatic_ContactAngle_Settings"]
+        QuasiStatic_ContactAngle = qscl_settings["QuasiStatic_ContactAngle"].GetBool()
+        Theta_equilibrium_hydrophilic = qscl_settings["Theta_equilibrium_hydrophilic"].GetDouble()
+        Theta_equilibrium_hydrophobic = qscl_settings["Theta_equilibrium_hydrophobic"].GetDouble()
+        Penalty_coefficient = qscl_settings["Penalty_coefficient"].GetDouble()
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.quasi_static_contact_angle, QuasiStatic_ContactAngle)
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.theta_equilibrium_hydrophilic, Theta_equilibrium_hydrophilic)
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.theta_equilibrium_hydrophobic, Theta_equilibrium_hydrophobic)
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.penalty_coefficient, Penalty_coefficient)
+
 
 
     def AddDofs(self):

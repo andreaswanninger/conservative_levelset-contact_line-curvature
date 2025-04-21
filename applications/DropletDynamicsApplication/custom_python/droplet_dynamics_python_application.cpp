@@ -82,6 +82,12 @@ PYBIND11_MODULE(KratosDropletDynamicsApplication,m)
     // Level-set convective velocity
     KRATOS_REGISTER_IN_PYTHON_3D_VARIABLE_WITH_COMPONENTS(m, CONVECTIVE_VELOCITY)
 
+    // AW 21.4: Quasi-static contact line model
+    KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, quasi_static_contact_angle)
+    KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, theta_equilibrium_hydrophilic)
+    KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, theta_equilibrium_hydrophobic)
+    KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, penalty_coefficient)
+
 }
 
 } // namespace Python.

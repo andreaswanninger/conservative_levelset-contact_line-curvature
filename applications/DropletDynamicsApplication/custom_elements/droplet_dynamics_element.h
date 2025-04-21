@@ -578,7 +578,12 @@ private:
         const std::vector<Matrix>& rCLShapeFunctions,
         const std::vector<Vector>& rTangential,
         MatrixType& rLHS,
-        VectorType& rRHS);
+        VectorType& rRHS,
+        // AW 21.4
+        const bool Quasi_static_contact_angle,
+        const double Theta_equilibrium_hydrophilic,
+        const double Theta_equilibrium_hydrophobic,
+        const double Penalty_coefficient);  
 
     /**
      * @brief Condense the enrichment without penalty
@@ -622,7 +627,11 @@ private:
         const std::vector<Vector>& rCLWeights,
         const std::vector<Matrix>& rCLShapeFunctions,
         const std::vector<Vector>& rTangential,
-        // AW 10.4: pass this to allow writing files specifying the current time
+          // AW 21.4
+        const bool Quasi_static_contact_angle,
+        const double Theta_equilibrium_hydrophilic,
+        const double Theta_equilibrium_hydrophobic,
+        const double Penalty_coefficient,
         const double current_time
     );
 

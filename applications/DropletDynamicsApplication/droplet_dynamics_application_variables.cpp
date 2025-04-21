@@ -56,4 +56,10 @@ namespace Kratos
     // Level-set convective velocity
     KRATOS_CREATE_3D_VARIABLE_WITH_COMPONENTS(CONVECTIVE_VELOCITY)
 
+    // AW 21.4
+    KRATOS_CREATE_VARIABLE(bool, quasi_static_contact_angle)
+    KRATOS_CREATE_VARIABLE(double, theta_equilibrium_hydrophilic)
+    KRATOS_CREATE_VARIABLE(double, theta_equilibrium_hydrophobic)
+    KRATOS_CREATE_VARIABLE(double, penalty_coefficient)
+
 }

@@ -1325,11 +1325,17 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
             double x_range_initial = x_max - x_min;
             double y_range_initial = y_max - y_min;
             // set this tolerance as desired
-            double tolerance = 5;
-            bool rotate_axes = (y_range_initial / x_range_initial > tolerance);  // Change to one-way check
+            double tolerance = 5.0;
+            // AW 21.4: changed to two-way tolerance
+            bool rotate_axes = (y_range_initial / x_range_initial > tolerance) || 
+                            (x_range_initial / y_range_initial > tolerance);
+
             if (rotate_axes) {
-                std::cout << "    AW 14.4: Rotating axes for element " << elemId << " due to steep gradient." << std::endl;
+                std::cout << "    AW 14.4: Rotating axes for element " << elemId 
+                        << " due to steep gradient (y_range = " << y_range_initial 
+                        << ", x_range = " << x_range_initial << ")." << std::endl;
             }
+
 
             // initialize the inverse of the square root needed for the rotation
             const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
