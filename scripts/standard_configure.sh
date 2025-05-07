@@ -38,6 +38,13 @@ add_app ${KRATOS_APP_DIR}/IgaApplication
 add_app ${KRATOS_APP_DIR}/DropletDynamicsApplication
 add_app ${KRATOS_APP_DIR}/ConvectionDiffusionApplication
 
+# AW 26.4
+# --- G+Smo local user install setup ---
+export GiSMo_ROOT=$HOME/gismo-install
+export CMAKE_PREFIX_PATH="$HOME/gismo-install:$CMAKE_PREFIX_PATH"
+export LD_LIBRARY_PATH="$HOME/gismo-install/lib:$LD_LIBRARY_PATH"
+export PKG_CONFIG_PATH="$HOME/gismo-install/lib/pkgconfig:$PKG_CONFIG_PATH"
+
 # Clean
 clear
 rm -rf "${KRATOS_BUILD}/${KRATOS_BUILD_TYPE}/cmake_install.cmake"

@@ -262,7 +262,8 @@ const array_1d<double, 3>& NormalComputationUtility::GetFittedNormal(int element
     if (it == msFittedNormals.end())
     {
         static array_1d<double, 3> default_normal = ZeroVector(3);
-        std::cout << "⚠️  Warning: Fitted normal not found for element " << element_id << std::endl;
+        // AW 24.4: print statement removed
+        // std::cout << "⚠️  Warning: Fitted normal not found for element " << element_id << std::endl;
         return default_normal;
     }
 

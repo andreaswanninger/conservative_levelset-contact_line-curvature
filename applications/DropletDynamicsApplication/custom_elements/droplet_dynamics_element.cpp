@@ -83,6 +83,7 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
     const double Penalty_coefficient = rCurrentProcessInfo[penalty_coefficient];
     const bool Quasi_static_contact_angle = rCurrentProcessInfo[quasi_static_contact_angle];
 
+
     // Resize and intialize output
     if (rLeftHandSideMatrix.size1() != LocalSize)
         rLeftHandSideMatrix.resize(LocalSize, LocalSize, false);
@@ -125,6 +126,8 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
             }
         }
 
+       
+
         if (data.IsCut()){
             GeometryType::Pointer p_geom = this->pGetGeometry();
             Matrix shape_functions_pos, shape_functions_neg;
@@ -143,7 +146,16 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
             std::vector<GeometryType::ShapeFunctionsGradientsType> contact_shape_derivatives_neg;//std::vector for multiple contact lines
             std::vector<Kratos::Vector> contact_gauss_pts_weights;                                //std::vector for multiple contact lines
             std::vector<Vector> contact_tangential_neg;                                          //std::vector for multiple contact lines
-            //std::vector<Vector> contact_vector;                                                  //std::vector for multiple contact lines
+            //std::vector<Vector> contact_vector;  
+            
+            // AW 5.5.: added to trace back why in some cases wrong elements marked as cut
+            const auto& r_geometry = this->GetGeometry();
+            KRATOS_INFO("CutElement") << "Element " << this->Id() << " is marked cut. Distances per node:";
+            for (std::size_t i = 0; i < r_geometry.size(); ++i) {
+                const double d = r_geometry[i].FastGetSolutionStepValue(DISTANCE);
+                KRATOS_INFO("CutElement") << "  Node " << r_geometry[i].Id() << ": " << d;
+            }
+
 
             // //////////
             // const Vector& structure_node_id;
@@ -2102,10 +2114,27 @@ void DropletDynamicsElement<TElementData>::ComputeSplitInterface(
         rInterfaceWeightsNeg,
         GeometryData::IntegrationMethod::GI_GAUSS_2);
 
-    // Call the Interface negative side normal functions calculator
-    pModifiedShapeFunctions->ComputeNegativeSideInterfaceAreaNormals(
+    // AW 29.4: outcommented; Call the Interface negative side normal functions calculator
+        pModifiedShapeFunctions->ComputeNegativeSideInterfaceAreaNormals(
         rInterfaceNormalsNeg,
-        GeometryData::IntegrationMethod::GI_GAUSS_2);
+        GeometryData::IntegrationMethod::GI_GAUSS_2);   
+
+    // AW 29.4: Replace geometric normal computation with interpolation of FITTED_NORMAL
+  /*   const auto& r_geom = this->GetGeometry();
+    rInterfaceNormalsNeg.resize(rInterfaceShapeFunctionNeg.size1());
+    for (unsigned int gpt = 0; gpt < rInterfaceShapeFunctionNeg.size1(); ++gpt) {
+        array_1d<double, 3> interpolated_normal = ZeroVector(3);
+        for (unsigned int i = 0; i < NumNodes; ++i) {
+            interpolated_normal += rInterfaceShapeFunctionNeg(gpt, i) * r_geom[i].GetValue(FITTED_NORMAL);
+        }
+
+        const double norm = norm_2(interpolated_normal);
+        if (norm > 1e-12)
+            interpolated_normal /= norm;
+
+        rInterfaceNormalsNeg[gpt] = interpolated_normal;
+    }  */
+
 
     for (unsigned int gp = 0; gp < rInterfaceNormalsNeg.size(); ++gp){
         const double normal_norm = norm_2(rInterfaceNormalsNeg[gp]);
@@ -2168,8 +2197,6 @@ void DropletDynamicsElement<TElementData>::ComputeSplitInterface(
         rContactTangentialsNeg[dim] = rContactTangentialsNeg[dim]/tangent_norm;
     } */
 
-        // AW 11.4
-        KRATOS_INFO("bullshit before") << std::endl;
     //if (rHasContactLine){ // HERE: HAS CONTACT LINE == contact_line_indices.size() > 0: no need for an explicit check
                           // ELSEWHERE: HAS CONTACT LINE == rContactWeightsNeg.size() > 0
         // Call the Contact Line negative side shape functions calculator
@@ -2179,9 +2206,6 @@ void DropletDynamicsElement<TElementData>::ComputeSplitInterface(
             rContactShapeDerivativesNeg,
             rContactWeightsNeg,
             GeometryData::IntegrationMethod::GI_GAUSS_2);
-        
-            // AW 11.4
-        KRATOS_INFO("bullshit after") << std::endl;
 }
 
 // template <>
@@ -2232,9 +2256,18 @@ void DropletDynamicsElement<TElementData>::CalculateCurvatureOnInterfaceGaussPoi
     for (unsigned int gpt = 0; gpt < n_gpt; ++gpt){
         double curvature = 0.0;
         for (unsigned int i = 0; i < NumNodes; ++i){
+            // AW 29.4: this interpolates curvature to the gauss points using unfitted curvature
             curvature += rInterfaceShapeFunctions(gpt,i) * r_geom[i].GetValue(CURVATURE);
+            // AW 29.4: this interpolates curvature to the gauss points using fitted curvature
+            // curvature += rInterfaceShapeFunctions(gpt,i) * r_geom[i].GetValue(FITTED_CURVATURE);
         }
         rInterfaceCurvature[gpt] = curvature;
+        // AW 26.4
+        // Print element ID and curvature at this Gauss point
+        KRATOS_INFO("CalculateCurvatureOnInterfaceGaussPoints")
+            << "Element ID: " << this->Id() 
+            << ", Gauss pt: " << gpt 
+            << ", Curvature: " << curvature << std::endl;
     }
 }
 
@@ -2257,38 +2290,35 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
 
     const std::size_t element_id = this->Id();
 
-    // AW 10.4: Toggle between fitted and unfitted values
-    bool use_fitted_curvature = true;
+   /*  // AW 10.4: Toggle between fitted and unfitted values
+    bool use_fitted_curvature = false;
     bool use_fitted_normal = false;
 
     auto curvature_pair = CurvatureFittingUtility::GetFittedParabolaCurvature(element_id);
     const double fitted_curvature = curvature_pair.first;
-    const bool is_rotated = curvature_pair.second;
+    const bool is_rotated = curvature_pair.second; */
 
   /*    // AW 15.4: only allow fitted curvature for a specific list of elements
      static const std::unordered_set<int> fitted_element_ids = {
         57, 58, 59, 197, 199, 200, 313, 314, 320, 450, 453, 456
     }; */
 
-    // AW 18.4: only use fitted curvature if it is defined AND the element was rotated
+    /* // AW 18.4: only use fitted curvature if it is defined AND the element was rotated
     if (std::isnan(fitted_curvature) || !is_rotated) {
         use_fitted_curvature = false;
-        KRATOS_WARNING("SurfaceTension") << "Fitted curvature not used for element " << element_id 
-                                        << ". Reason: " 
-                                        << (std::isnan(fitted_curvature) ? "NaN" : "element was NOT rotated") 
-                                        << ". Falling back to unfitted curvature." << std::endl;
-    }
+        // AW 24.4: print statement removed
+    } */
 
 
     // AW 11.4: modified to not load csv for every element
-    const array_1d<double,3>& fitted_normal =
-    Kratos::KratosDropletDynamics::NormalComputationUtility::GetFittedNormal(element_id);
+   /*  const array_1d<double,3>& fitted_normal =
+    Kratos::KratosDropletDynamics::NormalComputationUtility::GetFittedNormal(element_id); */
 
-    // AW 10.4: enforce using unfitted normal if fitted normal not found
+   /*  // AW 10.4: enforce using unfitted normal if fitted normal not found
     if (fitted_normal == ZeroVector(3)) {
         use_fitted_normal = false;
-        KRATOS_WARNING("SurfaceTension") << "No fitted normal found for element " << element_id << ". Falling back to unfitted normal." << std::endl;
-    }
+        // AW 24.4: print statement removed
+    } */
     
 
     // AW 10.4: Open CSVs in append mode
@@ -2297,22 +2327,54 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     std::ofstream unfitted_normal_file("unfitted_normals.csv", std::ios::app);
     std::ofstream fitted_normal_file("fitted_normals.csv", std::ios::app);
 
-    // AW 10.4: Write fitted values once per element
+   /*  // AW 10.4: Write fitted values once per element
     fitted_curv_file << std::setprecision(12)
         << current_time << "," << element_id << "," << fitted_curvature << "\n";
     
     fitted_normal_file << std::setprecision(12)
         << current_time << "," << element_id << ","
-        << fitted_normal[0] << "," << fitted_normal[1] << "," << fitted_normal[2] << "\n";
+        << fitted_normal[0] << "," << fitted_normal[1] << "," << fitted_normal[2] << "\n"; */
 
     for (unsigned int intgp = 0; intgp < rInterfaceWeights.size(); ++intgp){
+        // AW 5.5: Retrieve Gauss point coordinates via shape functions; DELETE if it is correct
+        array_1d<double, 3> gp_coords = ZeroVector(3);
+        for (std::size_t i = 0; i < NumNodes; ++i) {
+            gp_coords += rInterfaceShapeFunctions(intgp, i) * this->GetGeometry()[i];
+        }
+
+        // Print the coordinates with 12 digits of precision
+        std::stringstream ss;
+        ss << std::fixed << std::setprecision(12)
+        << "Element " << element_id << ", Gauss Point " << intgp
+        << " coords: (" << gp_coords[0] << ", " << gp_coords[1] << ", " << gp_coords[2] << ")";
+
+        KRATOS_INFO("SurfaceTension") << ss.str() << std::endl;
+
         // Extract unfitted values
         const double unfitted_curv = rCurvature(intgp);
         const array_1d<double, 3>& unfitted_normal = rInterfaceNormalsNeg[intgp];
     
-        // Select curvature and normal based on toggles
+       /*  // Select curvature and normal based on toggles
         const double curvature_to_use = use_fitted_curvature ? fitted_curvature : unfitted_curv;
-        const array_1d<double, 3>& normal_to_use = use_fitted_normal ? fitted_normal : unfitted_normal;
+        const array_1d<double, 3>& normal_to_use = use_fitted_normal ? fitted_normal : unfitted_normal; */
+
+        // AW 2.5: Get fitted values from the element 
+        const double kappa_gp1 = this->GetValue(CURVATURE_FITTED_GAUSS1);
+        const double kappa_gp2 = this->GetValue(CURVATURE_FITTED_GAUSS2);
+        const array_1d<double, 3> n_gp1 = this->GetValue(NORMAL_FITTED_GAUSS1);
+        const array_1d<double, 3> n_gp2 = this->GetValue(NORMAL_FITTED_GAUSS2);
+
+
+        KRATOS_INFO("SurfaceTension") << "Element " << element_id
+                              << " kappa_gp1: " << kappa_gp1
+                              << " kappa_gp2: " << kappa_gp2 << std::endl;
+
+
+        // AW 2.5: use fitted curvature and normal instead
+        const double fitted_curv = (intgp == 0) ? kappa_gp1 : kappa_gp2;
+        const array_1d<double, 3>& fitted_normal = (intgp == 0) ? n_gp1 : n_gp2;
+
+
     
         const double intgp_w = rInterfaceWeights(intgp);
 
@@ -2326,6 +2388,30 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             << current_time << "," << element_id << "," << intgp << ","
             << unfitted_normal[0] << "," << unfitted_normal[1] << "," << unfitted_normal[2] << "\n";
 
+        // Write fitted curvature (with GP number)
+        fitted_curv_file << std::setprecision(12)
+            << current_time << "," << element_id << "," << intgp << "," << fitted_curv << "\n";
+
+        // Write fitted normal (with GP number)
+        fitted_normal_file << std::setprecision(12)
+            << current_time << "," << element_id << "," << intgp << ","
+            << fitted_normal[0] << "," << fitted_normal[1] << "," << fitted_normal[2] << "\n";
+
+        // AW 2.5: Use fitted curvature and normal if available, otherwise fall back to unfitted
+        double curvature_to_use;
+        array_1d<double, 3> normal_to_use;
+
+        if (std::abs(fitted_curv) > 1e12|| norm_2(fitted_normal) > 1e12) {
+            curvature_to_use = fitted_curv;
+            normal_to_use = fitted_normal;
+        } else {
+            curvature_to_use = unfitted_curv;
+            normal_to_use = unfitted_normal;
+
+            KRATOS_WARNING("SurfaceTension") 
+                << "Element " << element_id << " GP " << intgp 
+                << " has zero fitted values; using unfitted instead." << std::endl;
+        }
     
         // === Print block ===
         /* KRATOS_INFO("SurfaceTension") << "Element " << this->Id() << ", Gauss Point " << intgp << ":" << std::endl;
@@ -2408,14 +2494,16 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     double node_x = (*p_geom)[0].X();  // Using the first node (index 0) for the check
     double contact_angle_equilibrium = 0.0;
 
-    if (node_x > 1.5e-2) {
+    if (node_x > 0.005) {
         contact_angle_equilibrium = Theta_equilibrium_hydrophobic * PI /180;
-        KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
-            << "Using hydrophobic angle (" << contact_angle_equilibrium / PI * 180 << "°) at x = " << node_x << std::endl;
+        // AW 24.4: print statement removed
+/*         KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
+            << "Using hydrophobic angle (" << contact_angle_equilibrium / PI * 180 << "°) at x = " << node_x << std::endl; */
     } else {
         contact_angle_equilibrium = Theta_equilibrium_hydrophilic * PI/180;
-        KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
-            << "Using hydrophilic angle (" << contact_angle_equilibrium / PI * 180  << "°) at x = " << node_x << std::endl;
+        // AW 24.4: print statement removed
+        /* KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
+            << "Using hydrophilic angle (" << contact_angle_equilibrium / PI * 180  << "°) at x = " << node_x << std::endl; */
     }
 
 
@@ -2424,6 +2512,13 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     double negative_density = 0.0;
     double positive_viscosity = 0.0;
     double negative_viscosity = 0.0;
+
+    // AW 29.4: added this, to be in accordance with Alirezas latest implementation
+    //////////////////////////
+    Vector force_sum_vector;
+    force_sum_vector.resize(Dim);
+    force_sum_vector = ZeroVector(Dim); // Initialize with zeros
+    //////////////////////////
 
     // AW 18.3: this is a loop over the number of nodes of the current element
     // based on the sign of the distance function (thats why interface preservation is absolutely crucial in redistancing!!),
@@ -2462,7 +2557,8 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     // in 2d, it is a point and it is questionary if this loop is even executed at all
     for (unsigned int i_cl = 0; i_cl < rCLWeights.size(); i_cl++){
         // AW 19.3: Debug Print Statement added
-        KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Contact Line Surface Tension Function has found a contact line! " << std::endl;
+        // AW 24.4: print statement removed
+        /* KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Contact Line Surface Tension Function has found a contact line! " << std::endl; */
         // AW 25.3: Debug Print Statement added
         // KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Size of rcl Weights" << rCLWeights.size() << std::endl;
         // AW 18.3: this creates the lhs dissipation matrix, where every node contributes with dim velocity components and 
@@ -2473,13 +2569,15 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
         Vector contact_vector_macro = ZeroVector(Dim);
         // AW 18.3: initializes the microscopic contact vector, with dim components
         Vector contact_vector_micro = ZeroVector(Dim);
+        // AW 29.4: added this to be in accordance with ALirezas latest implementation
+        Vector contact_vector_microS = ZeroVector(Dim);
         // AW 18.3: stores the tangent vector along the wall at the contact point,  with dim components
         Vector wall_tangent = ZeroVector(Dim);
         // AW 18.3: stores the normal vector along the wall at the contact line gauss point (if any?),  with dim components
-        // AW 21.3: updated to have right dimensions
-        array_1d<double, 3> wall_normal_gp = ZeroVector(3);
-        // AW 21.3: old line, outcommented
-        // Vector wall_normal_gp = ZeroVector(Dim);
+        // AW 21.3: updated to have right dimensions; AW 29.4: commented to be in accordance with Alirezas latest implementation
+        // array_1d<double, 3> wall_normal_gp = ZeroVector(3);
+        // AW 21.3: old line, commented; AW 29.4: outcommented to be in accordance with Alirezas latest implementation
+        Vector wall_normal_gp = ZeroVector(Dim);
         // AW 18.3: stores the velocity vector at the contact line gauss point (if any?), with dim components
         Vector velocity_gp = ZeroVector(Dim);
         // AW 18.3: three scalars are initialized as doubles
@@ -2521,7 +2619,8 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
         // AW TBC 18.3: it should be checked why this is the case and, more importantly, how to adjust the normal direction based on the contact line "side"
         MathUtils<double>::UnitCrossProduct(contact_vector_macro, rTangential[i_cl], normal_avg);
         ////////
-        std::cout<<"normal_avg = "<<normal_avg<<std::endl<<"rTangential[i_cl] = "<<rTangential[i_cl]<<std::endl<<"contact_vector_macro = "<<contact_vector_macro<<std::endl;
+        // AW 24.4: print statement removed
+        /* std::cout<<"normal_avg = "<<normal_avg<<std::endl<<"rTangential[i_cl] = "<<rTangential[i_cl]<<std::endl<<"contact_vector_macro = "<<contact_vector_macro<<std::endl; */
         ////////
 
         // AW 18.3: The loop iterates over contact line Gauss points (integration points along the contact line, if any) within the current contact line segment
@@ -2531,12 +2630,12 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             weight_sum += (rCLWeights[i_cl])[clgp];
 
             // AW 18.3: initializes the wall normal as well as velocity at the gauss point(s), with dim components each
-            // AW 21.3: adapted to clear all of its components first
-            wall_normal_gp[0] = 0.0;
+            // AW 21.3: adapted to clear all of its components first; AW 29.4: outcommented to be in accordance with Alirezas latest implementation
+           /*  wall_normal_gp[0] = 0.0;
             wall_normal_gp[1] = 0.0;
-            wall_normal_gp[2] = 0.0;
-            // AW 21.3: old line outcommented
-            // wall_normal_gp = ZeroVector(Dim);
+            wall_normal_gp[2] = 0.0; */
+            // AW 21.3: old line outcommented; AW 29.4: outcommented to be in accordance with Alirezas latest implementation
+            wall_normal_gp = ZeroVector(Dim);
             velocity_gp = ZeroVector(Dim);
             // AW 18.3: the average contact angle and distance difference between Gauss points are initialized as double
             double avg_contact_angle = 0.0;
@@ -2547,8 +2646,8 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
                 // AW 18.3: gives the approximate wall normal direction at the contact line Gauss point
                 // Rationale: We use the shape function value (rCLShapeFunctions[i_cl])(clgp,j) to interpolate the normal vector at the Gauss point
                 
-                // AW 21.3: Modification to ensure a 3d normal vector
-                const auto& normal_at_node = (*p_geom)[j].FastGetSolutionStepValue(NORMAL);
+                // AW 21.3: Modification to ensure a 3d normal vector; AW 29.4: commented this code block to be in accordance with Alirezas latest implementation
+                /* const auto& normal_at_node = (*p_geom)[j].FastGetSolutionStepValue(NORMAL);
 
                 array_1d<double, 3> normal_3D;
                 normal_3D[0] = normal_at_node[0];
@@ -2556,11 +2655,11 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
                 // AW 21.3: Idea: if third comp exists, use it; otherwise set it to zero
                 normal_3D[2] = (normal_at_node.size() == 3) ? normal_at_node[2] : 0.0;
             
-                wall_normal_gp += (rCLShapeFunctions[i_cl])(clgp,j) * normal_3D;
+                wall_normal_gp += (rCLShapeFunctions[i_cl])(clgp,j) * normal_3D; */
                 
-                // AW 21.3: old line, outcommented
-                //wall_normal_gp += (rCLShapeFunctions[i_cl])(clgp,j)
-                //            *(*p_geom)[j].FastGetSolutionStepValue(NORMAL);
+                // AW 21.3: old line, commented; AW 29.4: outcommented to be in accordance with Alirezas latest implementation
+                wall_normal_gp += (rCLShapeFunctions[i_cl])(clgp,j)
+                            *(*p_geom)[j].FastGetSolutionStepValue(NORMAL);
                 velocity_gp += (rCLShapeFunctions[i_cl])(clgp,j)*
                             (*p_geom)[j].FastGetSolutionStepValue(VELOCITY);
                 avg_contact_angle += (rCLShapeFunctions[i_cl])(clgp,j)*
@@ -2608,12 +2707,14 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             // AW 25.3: idea is that if the unit vector that is perpendicular to the wall tangent 
             // and the contact vector is pointing in the positive z direction, the vectors need to be reverted
             // AW 25.3: Debug Print Statement added
-            KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Wall Tangent at Gauss Point: " << wall_tangent << std::endl;
+            // AW 24.4: print statement removed
+            // KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Wall Tangent at Gauss Point: " << wall_tangent << std::endl;
             if ((1-1e-5) < unit_vector[2] && unit_vector[2] < (1+1e-5)) {
                 // AW 25.3: Debug Print Statement added
-                KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Prior contact vector macro: " << contact_vector_macro << std::endl;
+                // AW 24.4: print statement added
+               /*  KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Prior contact vector macro: " << contact_vector_macro << std::endl;
                 KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Prior wall tangent: " << wall_tangent << std::endl;
-                KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Reverting contact vector macro and wall tangent!! " << std::endl;
+                KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Reverting contact vector macro and wall tangent!! " << std::endl; */
                 contact_vector_macro = -contact_vector_macro;
                 wall_tangent = -wall_tangent;
             }
@@ -2629,7 +2730,8 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             // the wall tangent and the contact vector; it gives the angle btw the wall tangent and the movement direction
             // of the contact line
             const double contact_angle_macro_gp = std::acos(inner_prod(wall_tangent,contact_vector_macro));
-            std::cout<<"contact_angle_macro_gp = "<<contact_angle_macro_gp<<std::endl<<"wall_tangent = "<<wall_tangent<<std::endl<<"wall_normal_gp = "<< wall_normal_gp<<std::endl;
+            // AW 24.4: print statement removed
+            // std::cout<<"contact_angle_macro_gp = "<<contact_angle_macro_gp<<std::endl<<"wall_tangent = "<<wall_tangent<<std::endl<<"wall_normal_gp = "<< wall_normal_gp<<std::endl;
             ////////
             // AW 18.3: microscopic contact angle at current gauss point initialized with the prior computed macroscopic contact angle
             double contact_angle_micro_gp = contact_angle_macro_gp;
@@ -2734,30 +2836,62 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             // --> This is essentially a rotated version of the wall tangent vector based on the microscopic contact angle
             contact_vector_micro = std::cos(contact_angle_micro_gp)*wall_tangent +
                     std::sin(contact_angle_micro_gp)*wall_normal_gp;
+            // AW 29.4: added this back to be in accordance with Alirezas latest implementation
+            contact_vector_microS = std::cos(contact_angle_micro_gp)*wall_tangent;
             
             // AW 18.3: Once the contact line forces are computed at Gauss points, they must be redistributed to the nodes using the shape functions        
             // Outer loop over number of nodes
 
             // AW 19.3: print statement added
-            KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "contact_vector_micro: " << contact_vector_micro << std::endl;
+            // AW 24.4: print statement removed
+            /* KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "contact_vector_micro: " << contact_vector_micro << std::endl;
             KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "contact_vector_macro: " << contact_vector_macro << std::endl;
             KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "rCLWeights: " << rCLWeights << std::endl;
             KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "rCLShapeFunctions: " << rCLShapeFunctions << std::endl;
             KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "coefficient: " << coefficient << std::endl;
-            KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "penalty coefficient: " << Penalty_coefficient << std::endl;
+            KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "penalty coefficient: " << Penalty_coefficient << std::endl; */
             // AW 21.3: these additional print statements added
-            KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Macroscopic Contact Angle: " << contact_angle_macro_gp / PI * 180 << std::endl;
-            KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Equilibrium Contact Angle: " << contact_angle_equilibrium / PI * 180 << std::endl;
+            // AW 24.4: print statement removed
+            /* KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Macroscopic Contact Angle: " << contact_angle_macro_gp / PI * 180 << std::endl;
+            KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Equilibrium Contact Angle: " << contact_angle_equilibrium / PI * 180 << std::endl; */
+            
+            // AW 29.4: added this block to be in accordance with the latest implementation of Alireza
+            // Arrays to store the sum of forces for each dimension
+            std::vector<double> force_sum_by_dim(Dim, 0.0);
 
+            // Calculate force components and their sums for each dimension
+            for (unsigned int i = 0; i < NumNodes; i++) {
+                for (unsigned int dimi = 0; dimi < Dim; dimi++) {
+                    // Calculate the force component (tangential - normal)
+                    double force_component = 
+                        coefficientS * wall_tangent[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp, i) - 
+                        coefficient * contact_vector_microS[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp, i);
+                    
+                    // Add to the dimension sum
+                    force_sum_by_dim[dimi] += force_component;
+                }
+            }
+
+            // Transfer the summed forces to the vector
+            for (unsigned int dimi = 0; dimi < Dim; dimi++) {
+                force_sum_vector[dimi] = force_sum_by_dim[dimi];
+            }
 
             for (unsigned int i = 0; i < NumNodes; i++){
                 for (unsigned int dimi = 0; dimi < Dim; dimi++){
-                    // rhs[ i*(Dim+1) + dimi ] -= coefficient*contact_vector_micro[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i);
-                    // AW TBC 18.3: i think this is wrong; doesnt contain contribution of the difference btw actual contact angle and eq contact angle
-                    //rhs[ i*(Dim+1) + dimi ] += coefficientS*wall_tangent[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i); //Contac-line tangential force
-                    // AW 18.3: imo, should be like this; AW 21.3: update, surface tension coefficient added
-                    rhs[ i*(Dim+1) + dimi ] += Penalty_coefficient * coefficient * (std::cos(contact_angle_macro_gp) - std::cos(contact_angle_equilibrium)) 
-                            * wall_tangent[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp,i);
+                    // AW 29.4: added this back to be in accordance with Alirezas latest implementation
+                    // AW 2.5: update to remove these contributions (for now)
+                    if (!Quasi_static_contact_angle) {
+                        rhs[ i*(Dim+1) + dimi ] -= 0*coefficient*contact_vector_microS[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i);
+                        rhs[ i*(Dim+1) + dimi ] += 0*coefficientS*wall_tangent[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i); //Contac-line tangential force
+                    }
+                    else {
+                        rhs[ i*(Dim+1) + dimi ] -= Penalty_coefficient * coefficient*contact_vector_microS[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i);
+                        rhs[ i*(Dim+1) + dimi ] += Penalty_coefficient* coefficientS*wall_tangent[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i); //Contac-line tangential force
+                    }    
+                        // AW 18.3: imo, should be like this; AW 21.3: update, surface tension coefficient added; AW 29.4: outcommented to be in accordance with Alirezas latest implementation
+                    /* rhs[ i*(Dim+1) + dimi ] += Penalty_coefficient * coefficient * (std::cos(contact_angle_macro_gp) - std::cos(contact_angle_equilibrium)) 
+                            * wall_tangent[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp,i); */
                     // AW 18.3: this part is definitely not needed, as it stems solely from the MKT model
                     // AW 26.3: make this user-dependent
                     if (!Quasi_static_contact_angle) {
@@ -2772,8 +2906,9 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             }
             // AW 19.3: additionally, this print statement added
             for (std::size_t i = 0; i < rhs.size(); ++i) {
-                KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
-                    << "RHS[" << i << "] = " << rhs[i] << std::endl;
+                // AW 24.4: print statement removed
+               /*  KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
+                    << "RHS[" << i << "] = " << rhs[i] << std::endl; */
             }
             
             contact_velocity += (rCLWeights[i_cl])[clgp]*contact_velocity_gp;
@@ -2788,9 +2923,10 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             // Subtracting it from rhs ensures that the system accounts for these dissipation effects properly.
             rhs -= prod(lhs_dissipation,tempU);
         }
-
-        // contact_angle_macro /= weight_sum;
-        // this->SetValue(CONTACT_ANGLE, contact_angle_macro*180.0/PI);
+        
+        // AW 25.4: outcommented these 2 lines
+        contact_angle_macro /= weight_sum;
+        this->SetValue(CONTACT_ANGLE, contact_angle_macro*180.0/PI);
 
         contact_angle_micro /= weight_sum;
         this->SetValue(CONTACT_ANGLE_MICRO, contact_angle_micro*180.0/PI);
@@ -2802,9 +2938,13 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
 
             #pragma omp critical
             {
-            //(*p_geom)[i].FastGetSolutionStepValue(NORMAL_VECTOR) = normal_avg;
-            (*p_geom)[i].FastGetSolutionStepValue(TANGENT_VECTOR) = wall_tangent;
-            (*p_geom)[i].FastGetSolutionStepValue(CONTACT_VECTOR) = contact_vector_macro;
+                // AW 29.4: updated this code block to be in accordance with Alirezas latest implementation
+                (*p_geom)[i].FastGetSolutionStepValue(CONTACT_VELOCITY) = contact_velocity;
+                (*p_geom)[i].FastGetSolutionStepValue(NORMAL_VECTOR) = normal_avg;
+                //(*p_geom)[i].FastGetSolutionStepValue(TANGENT_VECTOR) = wall_tangent;
+                (*p_geom)[i].FastGetSolutionStepValue(DISTANCE_AUX2) = force_sum_vector[0];
+                (*p_geom)[i].FastGetSolutionStepValue(CONTACT_VECTOR) = contact_vector_macro;
+                (*p_geom)[i].FastGetSolutionStepValue(CONTACT_ANGLE_MICRO) = contact_angle_micro*180.0/PI;
             }
 
         }

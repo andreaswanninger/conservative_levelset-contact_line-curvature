@@ -115,8 +115,8 @@ void IntersectionPointsUtility::CollectElementIntersectionPoints(Element::Pointe
                         ExtractIntersectionPointsFromSplitter(p_tetra_splitter, pElement->Id());
                     }
                 }
-                
-                std::cout << "Processed interface points for element " << pElement->Id() << std::endl;
+                // AW 24.4: print statement removed
+                // std::cout << "Processed interface points for element " << pElement->Id() << std::endl;
             }
             catch (std::exception& e) {
                 std::cerr << "Error processing element " << pElement->Id() 
@@ -224,7 +224,8 @@ void IntersectionPointsUtility::ExtractIntersectionPointsFromSplitter(DivideGeom
         auto interface_points = p_splitter->GetInterfacePoints();
         
         if(interface_points.size() > 0) {
-            std::cout << "Found " << interface_points.size() << " interface points for element " << elementId << std::endl;
+            // AW 24.4: print statement removed
+            // std::cout << "Found " << interface_points.size() << " interface points for element " << elementId << std::endl;
             
             // Add each interface point to our container
             int point_count = 0;
@@ -831,8 +832,9 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurves(const std:
     const int MIN_POINTS_FOR_CIRCLE_FIT = 3;  // Absolute minimum needed for circle
     const int NEIGHBOR_EXPANSION_LEVEL = 3;   // Expand to n-hop neighbors
     
-    std::cout << "Starting circle fitting with " << points.size() << " intersection points." << std::endl;
-    std::cout << "Using all available points from 2-hop neighborhoods." << std::endl;
+    // AW 24.4: print statement removed
+    // std::cout << "Starting circle fitting with " << points.size() << " intersection points." << std::endl;
+    // std::cout << "Using all available points from 2-hop neighborhoods." << std::endl;
     
     // Group points by element
     std::map<int, std::vector<IntersectionPointData>> element_points;
@@ -953,11 +955,12 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurves(const std:
         
         // Only fit if we have enough points
         if (combined_points.size() >= MIN_POINTS_FOR_CIRCLE_FIT) {
-            std::cout << "Element " << elemId 
+            // AW 24.4: remove debug message
+            /* std::cout << "Element " << elemId 
                       << " has " << combined_points.size() 
                       << " points for circle fitting (" 
                       << original_point_count << " original + " 
-                      << points_from_neighbors << " from neighbors)." << std::endl;
+                      << points_from_neighbors << " from neighbors)." << std::endl; */
             
             // Prepare matrices for least squares fitting
             double sum_x = 0.0, sum_y = 0.0;
@@ -1052,18 +1055,20 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurves(const std:
             
             double avg_error = total_error / (original_points.empty() ? 1.0 : original_points.size());
             
-            std::cout << "Element " << elemId 
+            // AW 24.4: print statement removed
+           /*  std::cout << "Element " << elemId 
                       << " fitted with " << combined_points.size() 
                       << " points: (x-" << fit.a 
                       << ")² + (y-" << fit.b << ")² = " << fit.c 
                       << " (radius = " << radius << ")" 
                       << std::endl;
-            std::cout << "    Average fit error on original points: " << avg_error << std::endl;
+            std::cout << "    Average fit error on original points: " << avg_error << std::endl; */
         } else {
-            std::cout << "Element " << elemId 
+            // AW 24.4: print statement removed
+            /*             std::cout << "Element " << elemId 
                       << " has only " << combined_points.size() 
                       << " unique points (less than " << MIN_POINTS_FOR_CIRCLE_FIT 
-                      << " required) - cannot perform circle fitting." << std::endl;
+                      << " required) - cannot perform circle fitting." << std::endl; */
         }
     }
     
@@ -1129,8 +1134,9 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
     const int NEIGHBOR_EXPANSION_LEVEL = 6;   // Expand to n-hop neighbors
     
     // debug message pointing out the start of the quadratic curve fitting process
-    std::cout << "Starting quadratic curve fitting with " << points.size() << " intersection points." << std::endl;
-    std::cout << "Using all available points from 2-hop neighborhoods." << std::endl;
+    // AW 24.4: removed debug message
+    // std::cout << "Starting quadratic curve fitting with " << points.size() << " intersection points." << std::endl;
+    // std::cout << "Using all available points from 2-hop neighborhoods." << std::endl;
     
     // Group points by element
     // element_points maps element IDs to a list of IntersectionPointData objects
@@ -1299,11 +1305,12 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
         // (combined_points, which includes original and neighbor points) is at least the minimum required
         if (combined_points.size() >= MIN_POINTS_FOR_CURVE_FIT) {
             // debug log indicating how many points are used for the fit, including a breakdown of original vs neighbor points 
-            std::cout << "Element " << elemId 
+            // AW 24.4: print statement removed
+            /* std::cout << "Element " << elemId 
                       << " has " << combined_points.size() 
                       << " points for quadratic fitting (" 
                       << original_point_count << " original + " 
-                      << points_from_neighbors << " from neighbors)." << std::endl;
+                      << points_from_neighbors << " from neighbors)." << std::endl; */
             
             // Initialize x_min, x_max, y_min, and y_max to extreme values to later find the bounding box of all points
             double x_min = std::numeric_limits<double>::max();
@@ -1331,9 +1338,10 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
                             (x_range_initial / y_range_initial > tolerance);
 
             if (rotate_axes) {
-                std::cout << "    AW 14.4: Rotating axes for element " << elemId 
+                // AW 24.4: print statement removed
+                /* std::cout << "    AW 14.4: Rotating axes for element " << elemId 
                         << " due to steep gradient (y_range = " << y_range_initial 
-                        << ", x_range = " << x_range_initial << ")." << std::endl;
+                        << ", x_range = " << x_range_initial << ")." << std::endl; */
             }
 
 
@@ -1527,16 +1535,18 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola(co
             
             double avg_error = total_error / (original_points.empty() ? 1.0 : original_points.size());
             
-
-            std::cout << "    Average fit error on original points: " << avg_error << std::endl;
+            // AW 24.4: print statement removed
+            // std::cout << "    Average fit error on original points: " << avg_error << std::endl;
 
             // AW 14.4 new: Print all (x, y) pairs and their scaled x
-            std::cout << "    Fit points (original and scaled x):" << std::endl;
+            // AW 24.4: print statement removed
+            // std::cout << "    Fit points (original and scaled x):" << std::endl;
         } else {
-            std::cout << "Element " << elemId 
+            // AW 24.4: print statement removed
+            /* std::cout << "Element " << elemId 
                       << " has only " << combined_points.size() 
                       << " unique points (less than " << MIN_POINTS_FOR_CURVE_FIT 
-                      << " required) - cannot perform quadratic curve fitting." << std::endl;
+                      << " required) - cannot perform quadratic curve fitting." << std::endl; */
         }
     }
     
@@ -1871,7 +1881,7 @@ void IntersectionPointsUtility::ProcessIntersectionPointsAndFitGeneralConic(cons
             }
             
             double avg_error = total_error / (original_points.empty() ? 1.0 : original_points.size());
-            
+    
             std::cout << "Element " << elemId 
                       << " fitted with " << combined_points.size() 
                       << " points: y² + " << fit.a << "x² + " 
