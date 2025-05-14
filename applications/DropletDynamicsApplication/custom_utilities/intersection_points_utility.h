@@ -152,6 +152,99 @@ private:
         const std::string& filename);
 };
 
+////////////////////////////////
+// AW 14.5: added this part for normal averaging
+/// Utility for computing interface averages
+class InterfaceAveragesUtility
+{
+public:
+    typedef Matrix MatrixType;
+    
+    /// Compute interface averages for a given element
+    static void CollectElementInterfaceAverages(Element::Pointer pElement);
+    
+    /// Compute interface averages for all elements in a model part
+    static void ComputeModelPartInterfaceAverages(const ModelPart& rModelPart);
+    
+    /// Clear all stored interface average data
+    static void ClearInterfaceAverages();
+    
+    /// Get the global container of interface average data
+    static const std::vector<InterfaceAverageData>& GetInterfaceAverages();
+    
+    /// Apply interface averages to model part elements as element variables
+    static void ApplyInterfaceAveragesToModelPart(ModelPart& rModelPart, const std::string& variable_name);
+
+private:
+    /// Global container for interface average data
+    static std::vector<InterfaceAverageData> mInterfaceAverageContainer;
+};
+
+// Functions for combined intersection length and normal data
+void ClearIntersectionDataWithNormal();
+const std::vector<IntersectionDataWithNormal>& GetIntersectionDataWithNormal();
+int CollectIntersectionDataWithNormal(ModelPart& rModelPart);
+void SaveIntersectionDataWithNormalToFile(const std::string& filename);
+int SaveIntersectionLengthsAndNormalsToFile(const ModelPart& rModelPart, const std::string& filename);
+
+// Helper functions for element variables
+double GetElementIntersectionLength(const Element& rElement);
+double GetElementCutNormalX(const Element& rElement);
+double GetElementCutNormalY(const Element& rElement);
+double GetElementCutNormalZ(const Element& rElement);
+
+// Calculate and store intersection lengths
+int CalculateAndStoreElementIntersectionLengths(ModelPart& rModelPart);
+void SaveIntersectionLengthsToFile(const std::map<int, double>& rIntersectionLengths, const std::string& filename);
+
+// Element cut normal functions
+int SetElementCutNormals(ModelPart& rModelPart);
+void SaveElementAverageNormalsToFile(const ModelPart& rModelPart, const std::string& filename);
+
+// Helper functions finding elements and neighbors
+const InterfaceAverageData* FindElementInInterfaceAverages(
+    const std::vector<InterfaceAverageData>& rInterfaceAverages,
+    int ElementId);
+
+std::vector<int> GetElementNeighbors(const ModelPart& rModelPart, int ElementId);
+
+// Normal fitting functions
+array_1d<double, 3> FitLinearNormal(
+    const ModelPart& rModelPart,
+    const std::vector<InterfaceAverageData>& rInterfaceAverages,
+    int ElementId,
+    double& a0, double& a1, double& a2,
+    double& b0, double& b1, double& b2);
+
+// Save functions
+void SaveFittedNormalsToFile(
+    const ModelPart& rModelPart,
+    const std::vector<InterfaceAverageData>& rInterfaceAverages,
+    const std::string& Filename);
+
+// Averaged normal utility functions
+void ClearAveragedNormals(
+    ModelPart& rModelPart,
+    const std::string& VariableName = "ELEMENT_CUT_NORMAL_AVERAGED");
+
+int ComputeAndStoreAveragedNormals(
+    ModelPart& rModelPart,
+    int NeighborLevels = 1,
+    const std::string& VariableName = "ELEMENT_CUT_NORMAL_AVERAGED");
+
+array_1d<double, 3> ComputeAveragedElementNormal(
+    const ModelPart& rModelPart,
+    int ElementId,
+    int NeighborLevels = 1);
+
+// Save averaged normals to file
+void SaveAveragedNormalsToFile(
+    const ModelPart& rModelPart,
+    const std::string& Filename,
+    const std::string& VariableName = "ELEMENT_CUT_NORMAL_AVERAGED");
+// AW 14.5: end
+////////////////////////////////////
+
 }
 }
 #endif // KRATOS_INTERSECTION_POINTS_UTILITY_H_INCLUDED

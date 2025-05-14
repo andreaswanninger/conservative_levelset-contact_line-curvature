@@ -29,7 +29,9 @@
 #include "custom_utilities/contact_angle_evaluator.h"
 
 #include "custom_utilities/intersection_points_utility.h"  // Include for IntersectionPointsUtility
-#include "droplet_dynamics_application_variables.h"  // Include for IntersectionPointData
+// AW 14.5: added for intersectionPointsData and InterfaceAverageData
+#include "custom_utilities/intersection_points_container.h"
+#include "droplet_dynamics_application_variables.h"  
 
 // Aw 9.4: include the curvature fitting calculation utility; tells the compiler to use this class from the corresponding header file
 #include "custom_utilities/curvature_fitting_utility.h"
@@ -96,6 +98,165 @@ void AddCustomUtilitiesToPython(pybind11::module& m)
         .def_static("ProcessIntersectionPointsAndFitCurves", &KratosDropletDynamics::IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurves)
         .def_static("ProcessIntersectionPointsAndFitCurvesparabola", &KratosDropletDynamics::IntersectionPointsUtility::ProcessIntersectionPointsAndFitCurvesparabola);
 
+    /////////////////////////////////////////////////////////////       
+    // AW 14.5: added all this for the normal averaging
+     // Register interface averages data and utility
+     py::class_<InterfaceAverageData>(m, "InterfaceAverageData")
+     .def(py::init<>())
+     .def_readwrite("elementId", &InterfaceAverageData::elementId)
+     .def_readwrite("numberOfPoints", &InterfaceAverageData::numberOfPoints)
+     .def_readwrite("interfaceArea", &InterfaceAverageData::interfaceArea)
+     .def_property("averageCoordinates",
+         [](InterfaceAverageData& self) { 
+             return py::array_t<double>(3, &self.averageCoordinates[0]); 
+         },
+         [](InterfaceAverageData& self, py::array_t<double> arr) {
+             for (int i = 0; i < 3; i++) 
+                 self.averageCoordinates[i] = arr.at(i);
+         })
+     .def_property("averageNormal",
+         [](InterfaceAverageData& self) { 
+             return py::array_t<double>(3, &self.averageNormal[0]); 
+         },
+         [](InterfaceAverageData& self, py::array_t<double> arr) {
+             for (int i = 0; i < 3; i++) 
+                 self.averageNormal[i] = arr.at(i);
+         });
+ 
+    py::class_<KratosDropletDynamics::InterfaceAveragesUtility>(m, "InterfaceAveragesUtility")
+        .def_static("CollectElementInterfaceAverages", &KratosDropletDynamics::InterfaceAveragesUtility::CollectElementInterfaceAverages)
+        .def_static("ComputeModelPartInterfaceAverages", &KratosDropletDynamics::InterfaceAveragesUtility::ComputeModelPartInterfaceAverages)
+        .def_static("ClearInterfaceAverages", &KratosDropletDynamics::InterfaceAveragesUtility::ClearInterfaceAverages)
+        .def_static("GetInterfaceAverages", &KratosDropletDynamics::InterfaceAveragesUtility::GetInterfaceAverages, py::return_value_policy::reference);    
+    // Register IntersectionDataWithNormal struct and related functions
+    py::class_<IntersectionDataWithNormal>(m, "IntersectionDataWithNormal")
+        .def(py::init<>())
+        .def_readwrite("elementId", &IntersectionDataWithNormal::elementId)
+        .def_readwrite("intersectionLength", &IntersectionDataWithNormal::intersectionLength)
+        .def_property("normal",
+            [](IntersectionDataWithNormal& self) { 
+                return py::array_t<double>(3, &self.normal[0]); 
+            },
+            [](IntersectionDataWithNormal& self, py::array_t<double> arr) {
+                for (int i = 0; i < 3; i++) 
+                    self.normal[i] = arr.at(i);
+            })
+        .def_property("coordinates",
+            [](IntersectionDataWithNormal& self) { 
+                return py::array_t<double>(3, &self.coordinates[0]); 
+            },
+            [](IntersectionDataWithNormal& self, py::array_t<double> arr) {
+                for (int i = 0; i < 3; i++) 
+                    self.coordinates[i] = arr.at(i);
+            });
+    
+    // Add functions for working with combined intersection data
+    m.def("ClearIntersectionDataWithNormal", 
+        &KratosDropletDynamics::ClearIntersectionDataWithNormal,
+        "Clear the intersection data with normal container");
+    
+    m.def("GetIntersectionDataWithNormal", 
+        &KratosDropletDynamics::GetIntersectionDataWithNormal,
+        py::return_value_policy::reference,
+        "Get the container of intersection data with normals");
+    
+    m.def("CollectIntersectionDataWithNormal", 
+        &KratosDropletDynamics::CollectIntersectionDataWithNormal,
+        py::arg("rModelPart"),
+        "Populate the intersection data with normal container");
+    
+    m.def("SaveIntersectionDataWithNormalToFile", 
+        &KratosDropletDynamics::SaveIntersectionDataWithNormalToFile,
+        py::arg("Filename"),
+        "Save the intersection data with normals to file");
+        
+    // Add these lines here, inside the function
+    m.def("CalculateAndStoreElementIntersectionLengths", 
+        &KratosDropletDynamics::CalculateAndStoreElementIntersectionLengths,
+        py::arg("rModelPart"),
+        "Calculate and store intersection lengths for all 2D elements in the model part");
+
+
+    m.def("GetElementIntersectionLength", 
+        &KratosDropletDynamics::GetElementIntersectionLength,
+        py::arg("rElement"),
+        "Get the intersection length value from an element");
+        
+    m.def("SetElementCutNormals", 
+        &KratosDropletDynamics::SetElementCutNormals,
+        py::arg("rModelPart"),
+        "Set the ELEMENT_CUT_NORMAL variable for all elements that are cut by the interface");
+
+    // Add these to expose the helper functions
+    m.def("GetElementCutNormalX", 
+        &KratosDropletDynamics::GetElementCutNormalX,
+        py::arg("rElement"),
+        "Get X component of element cut normal");
+
+    m.def("GetElementCutNormalY", 
+        &KratosDropletDynamics::GetElementCutNormalY,
+        py::arg("rElement"),
+        "Get Y component of element cut normal");
+
+    m.def("GetElementCutNormalZ", 
+        &KratosDropletDynamics::GetElementCutNormalZ,
+        py::arg("rElement"),
+        "Get Z component of element cut normal");
+
+
+    m.def("FitLinearNormal", &KratosDropletDynamics::FitLinearNormal,
+        py::arg("rModelPart"),
+        py::arg("rInterfaceAverages"),
+        py::arg("ElementId"),
+        py::arg("a0"),
+        py::arg("a1"),
+        py::arg("a2"),
+        py::arg("b0"),
+        py::arg("b1"),
+        py::arg("b2"),
+        "Fit a normal vector using exactly three points (target element and two neighbors)");
+
+    // m.def("ApplyFittedNormalsToModelPart", &KratosDropletDynamics::ApplyFittedNormalsToModelPart,
+    //       py::arg("rModelPart"),
+    //       py::arg("rInterfaceAverages"),
+    //       py::arg("StoreOriginalNormal") = true,
+    //       "Apply fitted normals to all interface elements in the model part");
+        
+    m.def("SaveFittedNormalsToFile", &KratosDropletDynamics::SaveFittedNormalsToFile,
+        py::arg("rModelPart"),
+        py::arg("rInterfaceAverages"),
+        py::arg("Filename"),
+        "Save fitted normals to a file for visualization and debugging");
+
+        // Add bindings for the averaged normal functions
+    m.def("ClearAveragedNormals", 
+        &KratosDropletDynamics::ClearAveragedNormals,
+        py::arg("rModelPart"),
+        py::arg("VariableName") = "ELEMENT_CUT_NORMAL_AVERAGED",
+        "Clear averaged normal values from all elements");
+    
+    m.def("ComputeAndStoreAveragedNormals", 
+        &KratosDropletDynamics::ComputeAndStoreAveragedNormals,
+        py::arg("rModelPart"),
+        py::arg("NeighborLevels") = 1,
+        py::arg("VariableName") = "ELEMENT_CUT_NORMAL_AVERAGED",
+        "Compute and store averaged normals for all cut elements");
+    
+    m.def("ComputeAveragedElementNormal", 
+        &KratosDropletDynamics::ComputeAveragedElementNormal,
+        py::arg("rModelPart"),
+        py::arg("ElementId"),
+        py::arg("NeighborLevels") = 1,
+        "Compute an averaged normal for an element considering neighboring cut elements");
+
+    m.def("SaveAveragedNormalsToFile", 
+    &KratosDropletDynamics::SaveAveragedNormalsToFile,
+    py::arg("rModelPart"),
+    py::arg("Filename"),
+    py::arg("VariableName") = "ELEMENT_CUT_NORMAL_AVERAGED",
+    "Save averaged normals to a file for visualization and analysis");
+    // AW 14.5: end of changes made for the normal averaging
+    ///////////////////////////////////////////////////////
     
     // AW 9.4: makes it callable from python
     py::class_<KratosDropletDynamics::CurvatureFittingUtility>(m, "CurvatureFittingUtility")

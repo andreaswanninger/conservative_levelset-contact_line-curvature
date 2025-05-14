@@ -2636,7 +2636,7 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
         // AW 12.5: adapted to be in accordance with Alirezas latest implementation;
         // Specifically, this now includes the normal averaging at the tpcl
         // AW 12.5: outcommented for now, until process implemented
-        /* if (this->Has(ELEMENT_CUT_NORMAL_AVERAGED)) {
+        if (this->Has(ELEMENT_CUT_NORMAL_AVERAGED)) {
             // Use the pre-computed averaged normal
             normal_avg = this->GetValue(ELEMENT_CUT_NORMAL_AVERAGED);
             KRATOS_INFO("OOOOOOOOOOOOOOOOOOOOOOOOOOOKKKKKKKKKKKKKKKKKKKKKKK")<< std::endl;
@@ -2662,30 +2662,9 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
 
         // AW 18.3: normal_avg /= norm_2(normal_avg) → Normalizes the accumulated normal vector to unit length
         normal_avg /= norm_2(normal_avg);
-    } */
+    }
 
-        // AW 12.5: remove these lines once normal averaging implemented
-        // Fall back to original method
-        for (unsigned int intgp = 0; intgp < NumIntGP; intgp++) {
-            normal_avg += rIntWeights(intgp)*rIntNormalsNeg[intgp];
-            // AW 9.5: new code: uses the fitted normals
-        // Retrieve fitted normals stored in the element
-        const array_1d<double, 3> n_gp1 = this->GetValue(NORMAL_FITTED_GAUSS1);
-        const array_1d<double, 3> n_gp2 = this->GetValue(NORMAL_FITTED_GAUSS2);
-
-        // Select the correct one based on Gauss point index
-        const array_1d<double, 3>& fitted_normal = (intgp == 0) ? n_gp1 : n_gp2;
-
-        // Use fitted normal in averaging
-        normal_avg_fitted += rIntWeights(intgp) * fitted_normal;
-        }
-    
-        // AW 9.5: debug print added to compare unfitted and fitted averaged normal
-        KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Averaged Normal (unfitted): " << normal_avg << std::endl;
-        KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Averaged Normal (fitted): " << normal_avg_fitted << std::endl;
-
-        // AW 18.3: normal_avg /= norm_2(normal_avg) → Normalizes the accumulated normal vector to unit length
-        normal_avg /= norm_2(normal_avg);
+        
 
         // AW 18.3: These lines compute the effective (or averaged) density and viscosity at the interface
         // AW TBD 18.3: would be more accurate if interpolation were done instead of simple arithmetic mean
