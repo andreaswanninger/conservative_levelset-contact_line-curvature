@@ -84,4 +84,12 @@ namespace Kratos
     KRATOS_CREATE_VARIABLE(double, CURVATURE_FITTED_GAUSS2)
     KRATOS_CREATE_3D_VARIABLE_WITH_COMPONENTS(NORMAL_FITTED_GAUSS1)
     KRATOS_CREATE_3D_VARIABLE_WITH_COMPONENTS(NORMAL_FITTED_GAUSS2)
+
+    // AW 19.5: Added variables regarding fitting choices
+    KRATOS_CREATE_VARIABLE(std::string, FittingType)                     // Python → C++ 
+    KRATOS_CREATE_VARIABLE(bool, UsePartialFitting)                      // Python → C++
+    KRATOS_CREATE_VARIABLE(Vector, FittingElementIds) // Python → C++
+    KRATOS_CREATE_VARIABLE(int, NormalEvaluationMode)                    // Python → C++
+
+
 }

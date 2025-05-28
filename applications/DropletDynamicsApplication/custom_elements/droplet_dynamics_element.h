@@ -543,7 +543,12 @@ private:
         const std::vector<array_1d<double,3>>& rInterfaceNormalsNeg,
         VectorType& rRHS,
         // AW 10.4: pass the current time
-        const double current_time);
+        const double current_time,
+        // AW 19.5: added the user-defined variables regarding fitting
+        const std::string& Fitting_type,
+        const bool Use_partial_fitting,
+        const std::vector<std::size_t>& Fitting_element_ids
+    );
 
     /**
      * @brief Computes the surface tension on the interface and implement its effect on the RHS vector
@@ -583,7 +588,11 @@ private:
         const bool Quasi_static_contact_angle,
         const double Theta_equilibrium_hydrophilic,
         const double Theta_equilibrium_hydrophobic,
-        const double Penalty_coefficient);  
+        const double Penalty_coefficient,
+        // AW 19.5: added the fitting variables
+        const std::string& Fitting_type,
+        const int Normal_evaluation_mode
+    );  
 
     /**
      * @brief Condense the enrichment without penalty
@@ -632,7 +641,12 @@ private:
         const double Theta_equilibrium_hydrophilic,
         const double Theta_equilibrium_hydrophobic,
         const double Penalty_coefficient,
-        const double current_time
+        const double current_time,
+        // AW 19.5: added the user-defined variables regarding fitting
+        const std::string& Fitting_type,
+        const bool Use_partial_fitting,
+        const std::vector<std::size_t>& Fitting_element_ids,
+        const int Normal_evaluation_mode
     );
 
     ///@}

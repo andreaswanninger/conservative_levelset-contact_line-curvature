@@ -77,11 +77,23 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
     VectorType &rRightHandSideVector,
     const ProcessInfo &rCurrentProcessInfo)
 {
-    // AW 21.4: added to access user-defined variables
+    // AW 21.4: added to access user-defined variables related to quasistatic cl
     const double Theta_equilibrium_hydrophilic = rCurrentProcessInfo[theta_equilibrium_hydrophilic];
     const double Theta_equilibrium_hydrophobic = rCurrentProcessInfo[theta_equilibrium_hydrophobic];
     const double Penalty_coefficient = rCurrentProcessInfo[penalty_coefficient];
     const bool Quasi_static_contact_angle = rCurrentProcessInfo[quasi_static_contact_angle];
+
+    // AW 19.5: added to access user-defined variables related to fitting
+    const std::string& Fitting_type = rCurrentProcessInfo[FittingType];
+    const bool Use_partial_fitting = rCurrentProcessInfo[UsePartialFitting];
+    const Vector& vec = rCurrentProcessInfo[FittingElementIds];
+    std::vector<std::size_t> Fitting_element_ids(vec.size());
+
+    for (std::size_t i = 0; i < vec.size(); ++i) {
+        Fitting_element_ids[i] = static_cast<std::size_t>(vec[i]);
+    }
+    const int Normal_evaluation_mode = rCurrentProcessInfo[NormalEvaluationMode];
+
 
 
     // Resize and intialize output
@@ -149,12 +161,12 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
             //std::vector<Vector> contact_vector;  
             
             // AW 5.5.: added to trace back why in some cases wrong elements marked as cut
-            const auto& r_geometry = this->GetGeometry();
+            /* const auto& r_geometry = this->GetGeometry();
             KRATOS_INFO("CutElement") << "Element " << this->Id() << " is marked cut. Distances per node:";
             for (std::size_t i = 0; i < r_geometry.size(); ++i) {
                 const double d = r_geometry[i].FastGetSolutionStepValue(DISTANCE);
                 KRATOS_INFO("CutElement") << "  Node " << r_geometry[i].Id() << ": " << d;
-            }
+            } */
 
 
             // //////////
@@ -376,7 +388,12 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
                         Theta_equilibrium_hydrophilic,
                         Theta_equilibrium_hydrophobic,
                         Penalty_coefficient,
-                        current_time            
+                        current_time,
+                        // AW 19.5
+                        Fitting_type,
+                        Use_partial_fitting,
+                        Fitting_element_ids,
+                        Normal_evaluation_mode
                     );
 
                 /*}  else{
@@ -2264,10 +2281,10 @@ void DropletDynamicsElement<TElementData>::CalculateCurvatureOnInterfaceGaussPoi
         rInterfaceCurvature[gpt] = curvature;
         // AW 26.4
         // Print element ID and curvature at this Gauss point
-        KRATOS_INFO("CalculateCurvatureOnInterfaceGaussPoints")
+       /*  KRATOS_INFO("CalculateCurvatureOnInterfaceGaussPoints")
             << "Element ID: " << this->Id() 
             << ", Gauss pt: " << gpt 
-            << ", Curvature: " << curvature << std::endl;
+            << ", Curvature: " << curvature << std::endl; */
     }
 }
 
@@ -2283,43 +2300,18 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     const std::vector<array_1d<double,3>>& rInterfaceNormalsNeg,
     VectorType& rRHS,
     // AW 10.4: pass the current time
-    const double current_time)
+    const double current_time,
+    // AW 19.5: added the user-defined variables regarding fitting
+    const std::string& Fitting_type,
+    const bool Use_partial_fitting,
+     // AW 19.5: added the user-defined variables regarding fitting
+    const std::vector<std::size_t>& Fitting_element_ids
+)
 {
     // The external interfacial force (per unit area)
     const Vector external_int_force = this->GetValue(EXT_INT_FORCE);
 
     const std::size_t element_id = this->Id();
-
-   /*  // AW 10.4: Toggle between fitted and unfitted values
-    bool use_fitted_curvature = false;
-    bool use_fitted_normal = false;
-
-    auto curvature_pair = CurvatureFittingUtility::GetFittedParabolaCurvature(element_id);
-    const double fitted_curvature = curvature_pair.first;
-    const bool is_rotated = curvature_pair.second; */
-
-  /*    // AW 15.4: only allow fitted curvature for a specific list of elements
-     static const std::unordered_set<int> fitted_element_ids = {
-        57, 58, 59, 197, 199, 200, 313, 314, 320, 450, 453, 456
-    }; */
-
-    /* // AW 18.4: only use fitted curvature if it is defined AND the element was rotated
-    if (std::isnan(fitted_curvature) || !is_rotated) {
-        use_fitted_curvature = false;
-        // AW 24.4: print statement removed
-    } */
-
-
-    // AW 11.4: modified to not load csv for every element
-   /*  const array_1d<double,3>& fitted_normal =
-    Kratos::KratosDropletDynamics::NormalComputationUtility::GetFittedNormal(element_id); */
-
-   /*  // AW 10.4: enforce using unfitted normal if fitted normal not found
-    if (fitted_normal == ZeroVector(3)) {
-        use_fitted_normal = false;
-        // AW 24.4: print statement removed
-    } */
-    
 
     // AW 10.4: Open CSVs in append mode
     std::ofstream unfitted_curv_file("unfitted_curvature.csv", std::ios::app);
@@ -2327,55 +2319,51 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     std::ofstream unfitted_normal_file("unfitted_normals.csv", std::ios::app);
     std::ofstream fitted_normal_file("fitted_normals.csv", std::ios::app);
 
-   /*  // AW 10.4: Write fitted values once per element
-    fitted_curv_file << std::setprecision(12)
-        << current_time << "," << element_id << "," << fitted_curvature << "\n";
-    
-    fitted_normal_file << std::setprecision(12)
-        << current_time << "," << element_id << ","
-        << fitted_normal[0] << "," << fitted_normal[1] << "," << fitted_normal[2] << "\n"; */
-
     for (unsigned int intgp = 0; intgp < rInterfaceWeights.size(); ++intgp){
-        // AW 5.5: Retrieve Gauss point coordinates via shape functions; DELETE if it is correct
-        array_1d<double, 3> gp_coords = ZeroVector(3);
+        // AW 5.5: Retrieve Gauss point coordinates via shape functions; DELETE if it is correct (kept for now in case check tbd in future)
+        /* array_1d<double, 3> gp_coords = ZeroVector(3);
         for (std::size_t i = 0; i < NumNodes; ++i) {
             gp_coords += rInterfaceShapeFunctions(intgp, i) * this->GetGeometry()[i];
-        }
+        } */
 
-        // Print the coordinates with 12 digits of precision
-        std::stringstream ss;
+        // Print the coordinates with 12 digits of precision (commented for now)
+        /* std::stringstream ss;
         ss << std::fixed << std::setprecision(12)
         << "Element " << element_id << ", Gauss Point " << intgp
         << " coords: (" << gp_coords[0] << ", " << gp_coords[1] << ", " << gp_coords[2] << ")";
 
-        KRATOS_INFO("SurfaceTension") << ss.str() << std::endl;
+        KRATOS_INFO("SurfaceTension") << ss.str() << std::endl; */
 
         // Extract unfitted values
         const double unfitted_curv = rCurvature(intgp);
         const array_1d<double, 3>& unfitted_normal = rInterfaceNormalsNeg[intgp];
     
-       /*  // Select curvature and normal based on toggles
-        const double curvature_to_use = use_fitted_curvature ? fitted_curvature : unfitted_curv;
-        const array_1d<double, 3>& normal_to_use = use_fitted_normal ? fitted_normal : unfitted_normal; */
 
-        // AW 2.5: Get fitted values from the element 
-        const double kappa_gp1 = this->GetValue(CURVATURE_FITTED_GAUSS1);
-        const double kappa_gp2 = this->GetValue(CURVATURE_FITTED_GAUSS2);
-        const array_1d<double, 3> n_gp1 = this->GetValue(NORMAL_FITTED_GAUSS1);
-        const array_1d<double, 3> n_gp2 = this->GetValue(NORMAL_FITTED_GAUSS2);
+        // AW 2.5: Initialize fitted curvatures+ normals, then get fitted values from the element only if fitting type is 'nurbs', else leave at zero
+        // this will also be displayed in the csv files (hence only if nurbs fitting type activated, there will be curvature written)
+        double kappa_gp1 = 0.0;
+        double kappa_gp2 = 0.0;
+        array_1d<double, 3> n_gp1 = ZeroVector(3);
+        array_1d<double, 3> n_gp2 = ZeroVector(3);
+
+        if (Fitting_type == "nurbs") {
+            kappa_gp1 = this->GetValue(CURVATURE_FITTED_GAUSS1);
+            kappa_gp2 = this->GetValue(CURVATURE_FITTED_GAUSS2);
+            n_gp1 = this->GetValue(NORMAL_FITTED_GAUSS1);
+            n_gp2 = this->GetValue(NORMAL_FITTED_GAUSS2);
+        }
 
 
-        KRATOS_INFO("SurfaceTension") << "Element " << element_id
+
+        /* KRATOS_INFO("SurfaceTension") << "Element " << element_id
                               << " kappa_gp1: " << kappa_gp1
-                              << " kappa_gp2: " << kappa_gp2 << std::endl;
+                              << " kappa_gp2: " << kappa_gp2 << std::endl; */
 
 
-        // AW 2.5: use fitted curvature and normal instead
+        // AW 2.5: use fitted curvature and normal, based on gauss point 
         const double fitted_curv = (intgp == 0) ? kappa_gp1 : kappa_gp2;
         const array_1d<double, 3>& fitted_normal = (intgp == 0) ? n_gp1 : n_gp2;
 
-
-    
         const double intgp_w = rInterfaceWeights(intgp);
 
         // AW 10.4 Write unfitted values
@@ -2397,40 +2385,34 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             << current_time << "," << element_id << "," << intgp << ","
             << fitted_normal[0] << "," << fitted_normal[1] << "," << fitted_normal[2] << "\n";
 
-        // AW 2.5: Use fitted curvature and normal if available, otherwise fall back to unfitted
-        // AW 9.5: outcomment this for now to allow conditional usage only for elements in vicinity of tpcl
-        /* double curvature_to_use;
-        array_1d<double, 3> normal_to_use;
+        // AW 19.5: Decide if fitted values should be used for this element
+        // Intialize the boolean to be false
+        bool use_fitted = false;
 
-        if (std::abs(fitted_curv) > 1e-12|| norm_2(fitted_normal) > 1e-12) {
-            curvature_to_use = fitted_curv;
-            normal_to_use = fitted_normal;
-        } else {
-            curvature_to_use = unfitted_curv;
-            normal_to_use = unfitted_normal;
+        // Preliminary check if fitting is enabled at all
+        if (Fitting_type == "nurbs") {
+            // If partial fitting, set fitting to true only if current element_id is listed
+            if (Use_partial_fitting) {
+                use_fitted = std::find(Fitting_element_ids.begin(), Fitting_element_ids.end(), element_id) != Fitting_element_ids.end();
+            } 
+            // If total fitting, set fitting to true
+            else {
+                use_fitted = true;
+            }
+        } else 
+        // set boolean to false if fitting is not enabled
+        {
+            use_fitted = false;
+        }
 
-            KRATOS_WARNING("SurfaceTension") 
-                << "Element " << element_id << " GP " << intgp 
-                << " has zero fitted values; using unfitted instead." << std::endl;
-        } */
 
-        // AW 9.5: Updated to use fitted values only for these element IDs (conditional usage in vicinity of tpcl)
-
-        //  creates a set of element IDs for which the use of fitted curvature and normals shall be enabled
-        /* static const std::unordered_set<std::size_t> fitted_element_ids = {
-            49, 50, 51, 149, 151, 152, 249, 349
-        }; */
-        static const std::unordered_set<std::size_t> fitted_element_ids = {
-        };
-        
-        // use_fitted becomes true only for the elements in the predefined set
-        bool use_fitted = fitted_element_ids.count(element_id) > 0;
 
         // curvature and normal values that will actually be used in the surface tension force assembly
         double curvature_to_use;
         array_1d<double, 3> normal_to_use;
         
-        // enters the block only if: a) current element is in selected list; b) fitted values are numerically valid
+        // Safeguard block: avoids using fitted curvature and normals if they are zero (because computation failed)
+        // enters the block only if: a) boolean is true; b) fitted values are numerically valid
         if (use_fitted && (std::abs(fitted_curv) > 1e-12 || norm_2(fitted_normal) > 1e-12)) {
             curvature_to_use = fitted_curv;
             normal_to_use = fitted_normal;
@@ -2506,7 +2488,11 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     const bool Quasi_static_contact_angle,
     const double Theta_equilibrium_hydrophilic,
     const double Theta_equilibrium_hydrophobic,
-    const double Penalty_coefficient)
+    const double Penalty_coefficient,
+    // AW 19.5
+    const std::string& Fitting_type,
+    const int Normal_evaluation_mode
+)
 {
     // AW 19.3: Debug Print Statement added
     // KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Contact Line Surface Tension Function is called! " << std::endl;
@@ -2621,48 +2607,88 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
         double contact_angle_macro = 0.0;
         double contact_angle_micro = 0.0;
         
-        // AW 18.3: array_1d<double, 3> → This is a fixed-size array with 3 components, storing double-precision values
-        // Kratos (apparently) uses 3D arrays for compatibility sometimes, even if working in 2D (where the last component remains zero)
-        // variable will store the averaged normal vector over integration points
-        // AW 12.5: changed to be in accordance with Alirezas latest implementation
-        array_1d<double, 3> normal_avg = ZeroVector(3);//Vector
-        array_1d<double, 3> normal_avg_fitted = ZeroVector(3);//Vector
-        // AW 18.3: Loop over number of Gauss Points of the current element
-        // NumIntGP → The number of integration (Gauss) points
-        // rIntWeights(intgp) → The weight associated with the current Gauss point
-        // rIntNormalsNeg[intgp] → The outward normal vector at the current Gauss point on the negative side of the interface
-        // normal_avg += ... → Accumulates a weighted sum of normal vectors
+        // AW 19.5: Normal averaging logic based on user setting
+        array_1d<double, 3> normal_avg_unfitted = ZeroVector(3); // for intermediate storage
+        array_1d<double, 3> normal_avg_fitted = ZeroVector(3); // for intermediate storage
+        array_1d<double, 3> normal_avg = ZeroVector(3); // Final normal to use
 
-        // AW 12.5: adapted to be in accordance with Alirezas latest implementation;
-        // Specifically, this now includes the normal averaging at the tpcl
-        // AW 12.5: outcommented for now, until process implemented
-        if (this->Has(ELEMENT_CUT_NORMAL_AVERAGED)) {
-            // Use the pre-computed averaged normal
-            normal_avg = this->GetValue(ELEMENT_CUT_NORMAL_AVERAGED);
-            KRATOS_INFO("OOOOOOOOOOOOOOOOOOOOOOOOOOOKKKKKKKKKKKKKKKKKKKKKKK")<< std::endl;
-        } else {
-            // Fall back to original method
-            for (unsigned int intgp = 0; intgp < NumIntGP; intgp++) {
-                normal_avg += rIntWeights(intgp)*rIntNormalsNeg[intgp];
-                // AW 9.5: new code: uses the fitted normals
-            // Retrieve fitted normals stored in the element
+        // AW 18.3: Loop over integration points to compute normal averages
+        for (unsigned int intgp = 0; intgp < NumIntGP; intgp++) {
+            normal_avg_unfitted += rIntWeights(intgp) * rIntNormalsNeg[intgp];
+
             const array_1d<double, 3> n_gp1 = this->GetValue(NORMAL_FITTED_GAUSS1);
             const array_1d<double, 3> n_gp2 = this->GetValue(NORMAL_FITTED_GAUSS2);
-
-            // Select the correct one based on Gauss point index
             const array_1d<double, 3>& fitted_normal = (intgp == 0) ? n_gp1 : n_gp2;
-
-            // Use fitted normal in averaging
+            
             normal_avg_fitted += rIntWeights(intgp) * fitted_normal;
+        }
+
+        // AW 18.3: Normalize both
+        normal_avg_unfitted /= norm_2(normal_avg_unfitted);
+        normal_avg_fitted   /= norm_2(normal_avg_fitted);
+
+        // Delete print statement once it works
+        KRATOS_INFO("DropletDynamics") << "Element ID: " << this->Id() << " Normal average (unfitted): " << normal_avg_unfitted << ", Normal average (fitted): " << normal_avg_fitted << std::endl;
+
+        // AW 19.5: Assign according to user-defined mode
+        if (Normal_evaluation_mode == 1) {
+            normal_avg = normal_avg_unfitted;
+            KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Using UNFITTED averaged normal" << std::endl;
+        }
+        else if (Normal_evaluation_mode == 2) {
+            normal_avg = normal_avg_fitted;
+            KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Using FITTED averaged normal" << std::endl;
+        }
+        else if (Normal_evaluation_mode == 3) {
+
+            if (this->Has(ELEMENT_CUT_NORMAL_AVERAGED)) {
+                normal_avg = this->GetValue(ELEMENT_CUT_NORMAL_AVERAGED);
+
+                bool is_zero_vector = false;
+
+                // Manually extract and log each component
+                const double x = normal_avg[0];
+                const double y = normal_avg[1];
+                const double z = normal_avg[2];
+
+                KRATOS_INFO("DropletDynamics::Diagnostic") 
+                    << "Element ID: " << this->Id() 
+                    << " | Raw stored normal: [" << x << ", " << y << ", " << z << "]" << std::endl;
+
+                // Check for all components being near-zero (within tolerance)
+                const double tol = 1e-12;
+                if (std::abs(x) < tol && std::abs(y) < tol && std::abs(z) < tol) {
+                    is_zero_vector = true;
+                    KRATOS_WARNING("DropletDynamicsElement::SurfaceTension")
+                        << "Zero normal vector detected in ELEMENT_CUT_NORMAL_AVERAGED for Element " << this->Id() << std::endl;
+                }
+
+            
+                if (!is_zero_vector) {
+                    normal_avg /= norm_2(normal_avg);
+                    KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
+                        << "Element ID: " << this->Id() 
+                        << " | Using ELEMENT_CUT_NORMAL_AVERAGED: " << normal_avg << std::endl;
+                } else {
+                    normal_avg = normal_avg_unfitted;
+                    KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
+                        << "Element ID: " << this->Id() 
+                        << " | ELEMENT_CUT_NORMAL_AVERAGED is empty, falling back to unfitted: " << normal_avg << std::endl;
+                }
+            } else {
+                KRATOS_WARNING("DropletDynamicsElement::SurfaceTension") 
+                    << "Requested ELEMENT_CUT_NORMAL_AVERAGED but it's missing — falling back to UNFITTED" << std::endl;
+                normal_avg = normal_avg_unfitted;
             }
         
-        // AW 9.5: debug print added to compare unfitted and fitted averaged normal
-        KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Averaged Normal (unfitted): " << normal_avg << std::endl;
-        KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Averaged Normal (fitted): " << normal_avg_fitted << std::endl;
+        } else {
+            KRATOS_WARNING("DropletDynamicsElement::SurfaceTension") 
+                << "Invalid Normal_evaluation_mode: " << Normal_evaluation_mode 
+                << ". Falling back to UNFITTED normal." << std::endl;
+            normal_avg = normal_avg_unfitted;
+        }
+        
 
-        // AW 18.3: normal_avg /= norm_2(normal_avg) → Normalizes the accumulated normal vector to unit length
-        normal_avg /= norm_2(normal_avg);
-    }
 
         
 
@@ -2682,7 +2708,7 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
         // AW TBC 18.3: it should be checked why this is the case and, more importantly, how to adjust the normal direction based on the contact line "side"
         MathUtils<double>::UnitCrossProduct(contact_vector_macro, rTangential[i_cl], normal_avg);
         ////////
-        // AW 24.4: print statement removed
+        // AW 24.4: print statement
         std::cout<<"normal_avg = "<<normal_avg<<std::endl<<"rTangential[i_cl] = "<<rTangential[i_cl]<<std::endl<<"contact_vector_macro = "<<contact_vector_macro<<std::endl; 
         ////////
 
@@ -2907,7 +2933,7 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             contact_vector_microS = std::cos(contact_angle_micro_gp)*wall_tangent;
             
             // AW 12.5: added this part to be in accordance with Alirezas latest implementation
-            double h_coeff = 0.01;
+            double h_coeff = 0.1171875;
             if (contact_angle_micro_gp<=0.0 || contact_angle_micro_gp>=PI){
                 h_coeff = 0.0;
             }
@@ -2936,8 +2962,8 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
                 for (unsigned int dimi = 0; dimi < Dim; dimi++) {
                     // Calculate the force component (tangential - normal)
                     double force_component = 
-                        coefficientS * wall_tangent[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp, i) - 
-                        coefficient * contact_vector_microS[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp, i);
+                        h_coeff*coefficientS * wall_tangent[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp, i) - 
+                        h_coeff*coefficient * contact_vector_microS[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp, i);
                     
                     // Add to the dimension sum
                     force_sum_by_dim[dimi] += force_component;
@@ -3210,7 +3236,12 @@ void DropletDynamicsElement<TElementData>::AddSurfaceTensionContribution(
     const double Theta_equilibrium_hydrophilic,
     const double Theta_equilibrium_hydrophobic,
     const double Penalty_coefficient,
-    const double current_time)
+    const double current_time,
+    // AW 19.5: added the user-defined variables regarding fitting
+    const std::string& Fitting_type,
+    const bool Use_partial_fitting,
+    const std::vector<std::size_t>& Fitting_element_ids,
+    const int Normal_evaluation_mode)
 {
     // Surface tension coefficient is set in material properties
     const double surface_tension_coefficient = this->GetProperties().GetValue(SURFACE_TENSION_COEFFICIENT);
@@ -3229,7 +3260,12 @@ void DropletDynamicsElement<TElementData>::AddSurfaceTensionContribution(
         rInterfaceNormalsNeg,
         rRightHandSideVector,
         // AW 10.4: pass the current time
-        current_time);  
+        current_time,
+        // AW 19.5: added the user-defined variables regarding fitting
+        Fitting_type,
+        Use_partial_fitting,
+        Fitting_element_ids
+    );  
           
     SurfaceTension(
         rData,
@@ -3251,7 +3287,11 @@ void DropletDynamicsElement<TElementData>::AddSurfaceTensionContribution(
         Quasi_static_contact_angle,
         Theta_equilibrium_hydrophilic,
         Theta_equilibrium_hydrophobic,
-        Penalty_coefficient);      
+        Penalty_coefficient,
+        // AW 19.5: added the fitting variables
+        Fitting_type,
+        Normal_evaluation_mode
+    );      
 
     this->PressureGradientStabilization(
         rData,

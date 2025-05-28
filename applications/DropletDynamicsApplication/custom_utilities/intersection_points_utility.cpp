@@ -232,8 +232,8 @@ void IntersectionPointsUtility::ExtractIntersectionPointsFromSplitter(DivideGeom
                     g_IntersectionPointsContainer.push_back(point);
                 }
             }
-            
-            std::cout << "Added " << point_count << " real intersection points from element " << elementId << std::endl;
+            // AW 20.5: comment this output
+            // std::cout << "Added " << point_count << " real intersection points from element " << elementId << std::endl;
         } else {
             std::cout << "No interface points found for element " << elementId << std::endl;
             
@@ -460,8 +460,9 @@ void InterfaceAveragesUtility::CollectElementInterfaceAverages(Element::Pointer 
             // Add the data to the container
             mInterfaceAverageContainer.push_back(avg_data);
             
-            std::cout << "Processed interface averages for element " << pElement->Id() 
-                      << " with " << interface_weights_neg.size() << " interface points" << std::endl;
+            // AW 20.5: comment this debug output
+            //std::cout << "Processed interface averages for element " << pElement->Id() 
+            //          << " with " << interface_weights_neg.size() << " interface points" << std::endl;
         }
     }
 }

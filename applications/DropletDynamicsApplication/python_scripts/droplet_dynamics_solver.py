@@ -12,6 +12,7 @@ import KratosMultiphysics.python_linear_solver_factory as linear_solver_factory
 # AW 10.4: necessary for csv file writing
 import os
 import pdb
+import csv
 # AW 26.4: Nurbs fitting
 import pandas as pd
 import matplotlib.pyplot as plt                        # plotting
@@ -47,6 +48,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         ##settings string in json format
         # AW 21.4: quasistatic contact angle settings added
         # AW 5.5: smoothing coefficient increased to 500
+        # AW 19.5: fitting settings added
         default_settings = KratosMultiphysics.Parameters("""
         {
             "solver_type": "two_fluids",
@@ -133,7 +135,13 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 "power_value_in_epsilon_Calculation": 0.9,
                 "denominator_value_in_epsilon_Calculation": 2.0,
                 "convergenge_tolerence": 0.0001                            
-            }                                                                                               
+            },
+            "fitting_settings": {
+            "fitting_type": "nurbs",             
+            "use_partial_fitting": false,          
+            "fitting_element_ids": [49, 50, 51, 149, 151, 152, 249, 349], 
+            "normal_evaluation_mode": 1           
+            }                                                                                                                                            
         }""")
 
         default_settings.AddMissingParameters(super(DropletDynamicsSolver, cls).GetDefaultParameters())
@@ -254,6 +262,19 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.theta_equilibrium_hydrophilic, Theta_equilibrium_hydrophilic)
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.theta_equilibrium_hydrophobic, Theta_equilibrium_hydrophobic)
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.penalty_coefficient, Penalty_coefficient)
+
+        # AW 19.5: Added user-defined fitting settings
+        fitting_settings = self.settings["fitting_settings"]
+        fitting_type = fitting_settings["fitting_type"].GetString()
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.FittingType, fitting_type)
+        use_partial_fitting = fitting_settings["use_partial_fitting"].GetBool()
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.UsePartialFitting, use_partial_fitting)
+        fitting_element_ids = fitting_settings["fitting_element_ids"].GetVector()
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.FittingElementIds, fitting_element_ids)
+        normal_evaluation_mode = fitting_settings["normal_evaluation_mode"].GetInt()
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.NormalEvaluationMode, normal_evaluation_mode)
+
+
 
 
 
@@ -439,61 +460,21 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
 
         KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Level-set convection is performed.")
 
-        # Clear any existing intersection points from previous steps
-        KratosDroplet.IntersectionPointsUtility.ClearIntersectionPoints()
-    
-        # Collect intersection points from all elements
-        for element in self.main_model_part.Elements:
-            KratosDroplet.IntersectionPointsUtility.CollectElementIntersectionPoints(element)
-        
-        # AW 5.5: Run diagnostic to check how many elements are split by the level-set; Delete once not needed anymore
-        KratosDroplet.IntersectionPointsUtility.DiagnosticOutput(self.main_model_part)
-    
-        # Get all intersection points
-        points = KratosDroplet.IntersectionPointsUtility.GetIntersectionPoints()
-        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, f"Collected {len(points)} intersection points.")
-    
-        # Save intersection points to file
-        KratosDroplet.IntersectionPointsUtility.SaveIntersectionPointsToFile("intersection_points.txt")
+        # AW 21.5: moved all of these lines before the intersection points utility is called
 
-        ##################### Beginning of Nurbs Fitting ########################
-        # AW 27.4: outcomment legacy (non Nurbs based) curve fitting + curvature/normal computation approaches
-        """ # Fit curves to the points on an element-by-element basis
-        KratosDroplet.IntersectionPointsUtility.ProcessIntersectionPointsAndFitCurves("element_curves.txt")
-        KratosDroplet.IntersectionPointsUtility.ProcessIntersectionPointsAndFitCurvesparabola("element_curves_parabola.txt")
+        # filtering noises is necessary for curvature calculation
+        # distance gradient is used as a boundary condition for smoothing process
+        self._GetDistanceGradientProcess().Execute()
 
-        # AW 9.4: Ensure curvature file is cleared before writing
-        open("element_curvatures_simplified.csv", "w").close()
+        #AW 21.5: made smoothing conditional again
+        if self._distance_smoothing:
+            self._GetDistanceSmoothingProcess().Execute()
+            KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Smoothing process is finished.")
 
-        KratosDroplet.CurvatureFittingUtility.ComputeFittedCurvatures(
-            "element_curves_parabola.txt",
-            "element_curves.txt",
-            "intersection_points.txt",
-            # AW 15.4: new input files
-            "element_points_original.txt",
-            "element_points_rotated.txt",
-            "element_curvatures_simplified.csv"
-        )
+            # distance gradient is called again to comply with the smoothed/modified DISTANCE
+            self._GetDistanceGradientProcess().Execute()
 
-        KratosDroplet.CurvatureFittingUtility.LoadCurvatureCSV("element_curvatures_simplified.csv")
-
-         # AW 10.4: Ensure averaged normals file is cleared before writing
-        open("averaged_normals.csv", "w").close()
-
-        # AW 10.4: Compute fitted normals and write to file
-        from KratosMultiphysics.DropletDynamicsApplication import NormalComputationUtility
-        NormalComputationUtility.ComputeAveragedNormals(
-            "element_curves_parabola.txt",
-            "intersection_points.txt",
-            "element_points_rotated.txt",
-            "averaged_normals.csv"
-        )
-        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Averaged normals computed and saved.")
-
-        # AW 11.4: Load fitted normals once per time step
-        NormalComputationUtility.LoadNormalCSV("averaged_normals.csv")
-        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Averaged normals loaded.") """
-
+        ########### AW 21.5: Function definitions ###################
         # AW-C 26.4: Defines a function to order unordered interface points into contours
         def order_interface_contour(cut_df, tol=1e-12):
             """
@@ -591,855 +572,1122 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             # res.X contains the u value that minimizes the distance
             res = minimize_scalar(distance_squared, bounds=(u_min, u_max), method='bounded')
             return res.x  # optimal u
-        
 
 
-        # AW_C 26.4: Reads the file intersection_points.txt as a table, using tab characters as separators.
-        data = pd.read_csv('intersection_points.txt', sep="\t")
-        # AW-C 26.4: would sort data by the X column
-        # data.sort_values(by='X', inplace=True)
-        # would print basic statistics about the data
-        # data.describe()
-        # would extract the X and Y columns as a list of coordinate pairs
-        # pts = (data[['X', 'Y']].values).tolist()
-        # would remove duplicate points from that list
-        # cut_points = np.unique(pts, axis=0).tolist()
-        # AW-C 26.4: function that takes raw intersection points and orders them into continuous interface lines (contours)
-        contours = order_interface_contour(data)
-        # AW-C 26.4: picks the first contour (in case there are several disconnected ones); assumes one interface currently
-        cut_points = contours[0]
-        # AW-C 26.4: now a list of [x, y] coordinates tracing the interface, in order
-        # print(cut_points)
 
-
-        # ─────────────────────────────────────────────────────────────────────────────
-        # 2.2. Global NURBS interpolation
-        # AW-C 26.4:means we fit a quadratic NURBS curve (parabolic segments) 
-        degree = 2  # cubic NURBS
-        # AW-C 26.4: sets the number of control points for the NURBS curve (this controls the flexibility of the fit)
-        # AW-I 26.4: we could use some optimization to check what number of control points gives best fit (could be repeated e.g. every 50 time steps, similar to whats done in parallel redistancing)
-        ctrlpts_size=27# len(data)//2
-        # try:
-        # AW-C 26.4: Attempts to do an exact interpolating NURBS fit (with fallback on error)  
-        # curve = fitting.interpolate_curve(cut_points, degree=degree) #, centripetal=True global fit 
-        # except ZeroDivisionError:
-        #     # fallback to approximation
-        #     LeastSquares fit
-        # AW-C 26.4: actual code uses an approximate fit (least squares) with the given control point number and degree, which is more robust for noisy or incomplete data
-        print("Entering into curve fitting.")
-        print("Entering into curve fitting.")
-        # AW 13.5: updated to use less control points in case least squares fitting values due to ill-conditioning
-        success = False
-        max_attempts = ctrlpts_size - 5  # number of fallback attempts allowed
-        for offset in range(max_attempts + 1):  # try with ctrlpts_size, ctrlpts_size-1, ...
-            try:
-                current_ctrlpts_size = ctrlpts_size - offset
-                if current_ctrlpts_size < 6:
-                    print("[ERROR] Cannot fit curve: control point count dropped below 6.")
-                    break
-                print(f"Trying with ctrlpts_size = {current_ctrlpts_size}")
-                curve = fitting.approximate_curve(cut_points, degree=degree, ctrlpts_size=current_ctrlpts_size)
-                print("Curve fitting done.")
-                success = True
-                break
-            except ZeroDivisionError:
-                print(f"[WARNING] Curve fitting failed with ctrlpts_size = {current_ctrlpts_size}, trying fewer points...")
-
-        if not success:
-            raise RuntimeError("Curve fitting failed for all attempted control point sizes.")
-
-        print("Curve fitting done.")
-
-        # AW-C 26.4: curve.delta sets the sampling resolution when evaluating the curve (smaller = more points, higher detail).
-        curve.delta = 0.0001  # evaluation resolution
-        # AW-C 26.4: curve.vis attaches a 2D visualization object for plotting
-        # curve.vis = vis.VisCurve2D()
-        # Refine knot vector
-        # AW-C 26.4: (Commented out): One could refine the NURBS knot vector for better control point influence, but it’s unused here
-        # operations.refine_knotvector(curve, [1])
-        # AW-C 26.4. plot the curve
-        # fig = curve.render()
-
-        # Convert contour to NumPy array
-        cut_points_np = np.array(cut_points)
-
-        """ # AW 2.5: this part added for debug visualization
-        # Ensure curve is evaluated at high resolution
-        curve.evaluate()
-
-        # Fitted NURBS curve points
-        fitted_points = np.array(curve.evalpts)  # evaluated using delta = 0.01
-
-        # Control points
-        control_points = np.array(curve.ctrlpts)  # shape (ctrlpts_size, 2)
-
-        # Plot all in one figure
-        plt.figure(figsize=(6, 6))
-        plt.axis("equal")
-
-        # 2. Fitted NURBS curve
-        plt.plot(fitted_points[:, 0], fitted_points[:, 1], 'r-', linewidth=2, label='Fitted NURBS Curve')
-
-        # 1. Original ordered cut points (interface contour)
-        plt.plot(cut_points_np[:, 0], cut_points_np[:, 1], 'bo-', markersize=3, label='Ordered Cut Points')
-
-        # 3. Control points
-        plt.plot(control_points[:, 0], control_points[:, 1], 'ko--', label='Control Points', markersize=4)
-
-        # Labels and legend
-        plt.title("NURBS Fitting of Interface Contour")
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
-
-        # Save and show
-        plt.savefig("interface_fitting_nurbs_debug.png", dpi=300)
-        # plt.show() """
-
-
-        # AW 5.5: outcommented the part where curvature+normal where stored nodally as a rough approximation
-        """   # sample densely along the curve for closest-point search
-        # AW 29.4: outcommented, as of now, no more dense sampling and closest point search (expensive and inaccurate)
-        u_start, u_end = curve.knotvector[degree], curve.knotvector[-degree-1]
-        print("Starting sampling: ")
-        us_dense = np.linspace(u_start, u_end, 1000)
-        print("Evaluating pointwise curvature: ")
-        curve_points_dense = np.array([curve.evaluate_single(u)[:2] for u in us_dense]) 
-        # Compute chord-length-based parametric values for the original points
-        #  selects the first interface line; cut_points is now a list of 2D coordinates 
-        cut_points = contours[0]
-        # Converts the list to a NumPy array of shape (N, 2), where N is the number of points
-        cut_points_np = np.array(cut_points)
-        # If cut_points_np = [[x0,y0], [x1,y1], [x2,y2]], then:
-        # diffs=[[x1−x0,y1−y0],[x2−x1,y2−y1],...]
-        # Shape becomes (N-1, 2)
-        diffs = np.diff(cut_points_np, axis=0)
-        # Computes Euclidean distance between each consecutive pair
-        # gives the segment length between every two neighboring points
-        dists = np.linalg.norm(diffs, axis=1)
-        # Computes the cumulative sum of the segment lengths
-        # E.g., [d0, d0+d1, d0+d1+d2, ...]
-        # np.insert(..., 0, 0.0) prepends a zero at the start, meaning the first point has zero arc length
-        arc_lengths = np.insert(np.cumsum(dists), 0, 0.0)
-        # total_length is the full length of the interface curve.
-        total_length = arc_lengths[-1]
-        # param_values is the normalized arc-length parameter for each point
-        # ui​=total arc length up to i​∈[0,1]
-        # used as parameter values for evaluating the NURBS curve at the original points
-        param_values = arc_lengths / total_length  # normalized u values in [0, 1]
-
-
-        # 4. Prepare output lists
-        out_element_id = []
-        out_point_id = []
-        out_x = []
-        out_y = []
-        out_u = []
-        out_curv = []
-        out_nx = []
-        out_ny = []
-        out_theta = []
-
-        # AW 29.4: adapted, now looping directly through the ordered cut points
-        # Build lookup to get Element_ID and Point_ID by matching (X, Y) from DataFrame (intersection_points.txt)
-        meta_lookup = {
-            (round(row['X'], 12), round(row['Y'], 12)): (row['Element_ID'], row['Point_ID'])
-            for _, row in data.iterrows()
-        }
-        # output dictionary looking something like this:
-        #{
-        #(0.001234567890, 0.002345678901): (42, 0),
-        # ...
-        #}
-
-        # Loops over each point along the ordered interface contour (previously produced by order_interface_contour())
-        # i is the index, used to retrieve the corresponding parameter value from param_values
-        for i, (x0, y0) in enumerate(cut_points):
-            # Grabs the normalized arc length (∈ [0, 1]) corresponding to this interface point
-            # used to evaluate the NURBS curve at the right location
-            u_closest = param_values[i]
-
-            # Evaluate NURBS derivatives
-            d0, d1, d2 = curve.derivatives(u_closest, order=2)
-            x1, y1 = d1[0], d1[1]
-            x2, y2 = d2[0], d2[1]
-            num = abs(x1*y2 - y1*x2)
-            den = (x1**2 + y1**2)**1.5
-            curvature = num / den if den != 0 else 0.0
-            tnorm = np.hypot(x1, y1)
-            nx, ny = y1 / tnorm, -x1 / tnorm if tnorm != 0 else (0.0, 0.0)
-            normal = (-nx, -ny)
-            theta = np.rad2deg(np.arctan2(normal[1], normal[0]))
-
-            # Recover element and point ID from lookup
-            # Reconstructs the lookup key to find the associated Element_ID and Point_ID
-            # Try exact match first
-            # AW 30.4: adapted to include nearest neighbour search for points where exact coordinates wasnt found
-            key = (round(x0, 12), round(y0, 12))
-            if key in meta_lookup:
-                elem_id, pt_id = meta_lookup[key]
-            else:
-                # Fallback to nearest match by Euclidean distance
-                coords_array = np.array(list(meta_lookup.keys()))
-                distances = np.linalg.norm(coords_array - np.array([x0, y0]), axis=1)
-                min_idx = np.argmin(distances)
-                if distances[min_idx] < 1e-10:  # choose a suitable tolerance
-                    elem_id, pt_id = list(meta_lookup.values())[min_idx]
-                else:
-                    raise ValueError(f"Could not find metadata for point ({x0}, {y0}) — even with fallback search.")
-
-            # Store everything
-            out_element_id.append(elem_id)
-            out_point_id.append(pt_id)
-            out_x.append(x0)
-            out_y.append(y0)
-            out_u.append(u_closest)
-            out_curv.append(curvature)
-            out_nx.append(normal[0])
-            out_ny.append(normal[1])
-            out_theta.append(theta)
-
-         # 5. Loop over the DataFrame rows
-        for _, row in data.iterrows():
-            # AW 29.4: outcommented, as of now, no more dense sampling and closest point search (expensive and inaccurate)
-            x0, y0 = row['X'], row['Y']
-            dists = np.linalg.norm(curve_points_dense - np.array([x0, y0]), axis=1)
-            idx_closest = np.argmin(dists)
-            u_closest = us_dense[idx_closest] 
-
-
-            # Calculate NURBS properties at this location
-            d0, d1, d2 = curve.derivatives(u_closest, order=2)
-            x1, y1 = d1[0], d1[1]
-            x2, y2 = d2[0], d2[1]
-            num = abs(x1*y2 - y1*x2)
-            den = (x1**2 + y1**2)**1.5
-            curvature = num / den if den != 0 else 0.0
-            tnorm = np.hypot(x1, y1)
-            nx, ny = y1 / tnorm, -x1 / tnorm if tnorm != 0 else (0.0, 0.0)
-            normal = (-nx, -ny)
-            theta = np.rad2deg(np.arctan2(normal[1], normal[0]))
-
-            # Store original identifiers and results
-            out_element_id.append(row['Element_ID'])
-            out_point_id.append(row['Point_ID'])
-            out_x.append(x0)
-            out_y.append(y0)
-            out_u.append(u_closest)
-            out_curv.append(curvature)
-            out_nx.append(normal[0])
-            out_ny.append(normal[1])
-            out_theta.append(theta) 
-
-        # 6. Build the output DataFrame
-        output_df = pd.DataFrame({
-            "Element_ID": out_element_id,
-            "Point_ID": out_point_id,
-            "X": out_x,
-            "Y": out_y,
-            "u": out_u,
-            "curvature": out_curv,
-            "normal_x": out_nx,
-            "normal_y": out_ny,
-            "theta_deg": out_theta
-        })
-
-        output_df.to_csv("curve_normals_curvature_at_intersection_points.csv", index=False)
-        print("Saved curvature and normals at intersection points to curve_normals_curvature_at_intersection_points.csv") """
-
-
-
-        ###### AW 2.5: added this part to compute and store curvature at Gauss Points elementally
-        # ─────────────────────────────────────────────────────────────────────────────
-
-
-        # Load intersection points from file (already done above as `data`)
-        # Group intersection points per element
-        # creates a defaultdict from the collections module
-        # If you try to access a key that doesn't exist, it will automatically create an empty list as the default value
-        # dictionary will map: element ID → list of intersection points (tuples like (x, y))
-        element_intersections = defaultdict(list)
-        # Iterates over each row of the data DataFrame
-        # data.iterrows() returns a (row_index, row_data) tuple
-        # underscore _ means we’re ignoring the row index — only row (a Pandas Series) matters
-        for _, row in data.iterrows():
-            # Extracts the element ID from the row and casts it to an integer
-            # ID will be used as the key in the element_intersections dictionary
-            eid = int(row['Element_ID'])
-            # Extracts the x and y coordinates from the row and stores them as a tuple
-            point = (row['X'], row['Y'])
-            # Appends this (x, y) point to the list associated with eid in element_intersections
-            # If this is the first time eid appears, the defaultdict automatically creates a new list
-            element_intersections[eid].append(point)
-
-        # Initializes a dictionary to store curvature and normal values per element
-        # Keys will be element IDs, and values will be dictionaries like:
-        # { "curvatures": [k1, k2], "normals": [(nx1, ny1), (nx2, ny2)] }
-        element_gp_data = {}
-
-        # Opens the file "element_gp_curvatures_normals.csv" in write mode; f is the file handle
-        with open("element_gp_curvatures_normals.csv", "w") as f:
-            # Writes the header row for the CSV file
-            f.write("ElementID,kappa1,kappa2,nx1,ny1,nx2,ny2,gp1_x,gp1_y,gp2_x,gp2_y\n")
-
-            # Loops through each element ID (eid) and its associated list of intersection points (pts)
-            for eid, pts in element_intersections.items():
-                # Only processes elements that have exactly 2 intersection points (actually not needed, as every element has two intersection points anyways for our current configuration)
-                if len(pts) != 2:
-                    continue  # skip degenerate elements
-                
-                # Converts the two intersection points to NumPy arrays for vector math;
-                # p0 and p1 are the endpoints of the interface segment in this element
-                p0, p1 = np.array(pts[0]), np.array(pts[1])
-
-                # Gauss points in natural coords: ξ = ±1/√3
-                # standard Gauss-Legendre quadrature points for a linear element
-                gauss_weights = [-1/np.sqrt(3), 1/np.sqrt(3)]
-                # Maps each natural coordinate ξ to a physical Gauss point on the interface segment [p0, p1] using linear interpolation
-                # uses the isoparametric mapping from reference element to physical space.
-                gauss_points = [(0.5 * ((1 - xi) * p0 + (1 + xi) * p1)) for xi in gauss_weights]
-
-                # Initializes lists to store the computed curvature and normal vector for each Gauss point
-                curvatures = []
-                normals = []
-
-                # Store the actual coordinates of each Gauss point
-                gp_coords = []
-
-                # Loops over the two Gauss points just computed
-                for gp in gauss_points:
-                    # Project gp to NURBS parametric space by arc-length (approximate)
-                    # AW 5.5: old code, outcommented
-                    """ dists = np.linalg.norm(cut_points_np - gp, axis=1)
-                    idx_closest = np.argmin(dists)
-                    u_gp = param_values[idx_closest]  # uses precomputed arc-length params """
-                    # we skip evaluating at the exact endpoints by using the inner range:
-                    # u_min = curve.knotvector[p] → the first non-clamped parameter
-                    # u_max = curve.knotvector[-p - 1] → the last non-clamped parameter
-                    u_min = curve.knotvector[curve.degree]
-                    u_max = curve.knotvector[-curve.degree - 1]
-                    # Returns the parametric coordinate u_gp of the closest point on the curve
-                    u_gp = find_closest_u(curve, gp, u_min=u_min, u_max=u_max)
-
-                    # Computes the 0th, 1st, and 2nd derivatives of the NURBS curve at parameter u_gp
-                    # d1 is the tangent vector
-                    # d2 is the second derivative (used for curvature)
-                    d0, d1, d2 = curve.derivatives(u_gp, order=2)
-                    # Extracts the x and y components of the first and second derivatives
-                    x1, y1 = d1[0], d1[1]
-                    x2, y2 = d2[0], d2[1]
-                    # Computes 2D curvature at that point using the standard formula
-                    num = abs(x1 * y2 - y1 * x2)
-                    den = (x1 ** 2 + y1 ** 2) ** 1.5
-                    # Avoids division by zero if the denominator is zero
-                    curvature = num / den if den != 0 else 0.0
-                    # Computes the normal vector as perpendicular to the tangent
-                    # computes the Euclidean norm (or length) of the 2D vector
-                    tnorm = np.hypot(x1, y1)
-                    nx, ny = (y1 / tnorm, -x1 / tnorm) if tnorm != 0 else (0.0, 0.0) # outward unit normal
-                    normal = (nx, ny)  
-
-                    curvatures.append(curvature)
-                    normals.append(normal)
-                    gp_coords.append(gp)  # store actual gauss point (x, y)
-
-                # Save to dictionary for elemental assignment
-                element_gp_data[eid] = {
-                    "curvatures": curvatures,
-                    "normals": normals
-                }
-
-                # Write to file
-                k1, k2 = curvatures
-                (nx1, ny1), (nx2, ny2) = normals
-                (gp1_x, gp1_y), (gp2_x, gp2_y) = gp_coords
-
-                f.write(f"{eid},{k1},{k2},{nx1},{ny1},{nx2},{ny2},{gp1_x},{gp1_y},{gp2_x},{gp2_y}\n")
-
-        print("Saved curvature and normals at Gauss points to element_gp_curvatures_normals.csv")
-
-        # AW 2.5: Debug, delete!
-        if 9581 in element_gp_data:
-            print(f"Element 9581 found in element_gp_data:")
-            print("Curvatures:", element_gp_data[9581]["curvatures"])
-            print("Normals:", element_gp_data[9581]["normals"])
-        else:
-            print("Element 9581 NOT found in element_gp_data!")
-
-
-        # Loops through all elements in the main_model_part (the computational mesh in Kratos)
-        for element in self.main_model_part.Elements:
-            # Retrieves the element ID for the current element. This will match the keys in element_gp_data
-            eid = element.Id
-            # If this element doesn't have any stored Gauss point data (e.g., it wasn't cut by the interface), skip it
-            if eid not in element_gp_data:
-                continue
-            
-            # Retrieves the list of two curvature values and the list of two normal vectors for this element (one for each Gauss point)
-            curvatures = element_gp_data[eid]["curvatures"]
-            normals = element_gp_data[eid]["normals"]
-
-            # Stores the curvature at Gauss point 1 and 2 as element-level scalar values using Kratos’ SetValue() function 
-            element.SetValue(KratosDroplet.CURVATURE_FITTED_GAUSS1, curvatures[0])
-            element.SetValue(KratosDroplet.CURVATURE_FITTED_GAUSS2, curvatures[1])
-            # does the same for normals; [*normals[0], 0.0] expands the 2D tuple (nx, ny) into a 3D vector by adding a 0 in the z-direction (since Kratos expects 3D vectors even in 2D problems)
-            element.SetValue(KratosDroplet.NORMAL_FITTED_GAUSS1, [*normals[0], 0.0])
-            element.SetValue(KratosDroplet.NORMAL_FITTED_GAUSS2, [*normals[1], 0.0])
-
-            print(f"Element {eid} - kappa1 = {element.GetValue(KratosDroplet.CURVATURE_FITTED_GAUSS1)}, kappa2 = {element.GetValue(KratosDroplet.CURVATURE_FITTED_GAUSS2)}")
-
-
-        # AW 5.5.: commented, nodal storage is legacy
-        """ # AW 26.4: now store curvatures and normals nodally 
-        df = pd.read_csv('curve_normals_curvature_at_intersection_points.csv')
-        element_curvature = dict(zip(df['Element_ID'], df['curvature']))
-        element_normal_x = dict(zip(df['Element_ID'], df['normal_x']))
-        element_normal_y = dict(zip(df['Element_ID'], df['normal_y']))
-
-        for element in self.main_model_part.Elements:
-            element_id = element.Id
-            if element_id in element_curvature:
-                curvature = float(element_curvature[element_id])
-                normal_x = float(element_normal_x[element_id])
-                normal_y = float(element_normal_y[element_id])
-                for node in element.GetNodes():
-                    node.SetValue(KratosDroplet.FITTED_CURVATURE, curvature)
-                    node.SetValue(KratosDroplet.FITTED_NORMAL, [normal_x, normal_y, 0.0]) """
-        
-        """ # AW 5.5: debug plotting part for code validation
-
-        ### Plotting Part 1: global
-
-        # Collect all Gauss points and projected points from the NURBS fitting
-        # Initialize two lists to store:
-        all_gauss_points = []  # Gauss points on interface segments
-        all_projected_points = [] # Their corresponding (closest point) "projections" on the NURBS
-
-        # Extract the valid parameter range of the NURBS curve (excluding clamped ends) so we stay within a well-defined region when evaluating or projecting points
-        u_min = curve.knotvector[curve.degree]
-        u_max = curve.knotvector[-curve.degree - 1]
-
-        # Iterate over each element that has exactly two intersection points (i.e., properly cut by the level set)
-        for eid, pts in element_intersections.items():
-            if len(pts) != 2:
-                continue
-            
-            # Convert the two intersection points of the element to NumPy arrays (endpoints of the interface segment)
-            p0, p1 = np.array(pts[0]), np.array(pts[1])
-            gauss_weights = [-1/np.sqrt(3), 1/np.sqrt(3)]
-            # Compute the physical positions of two Gauss points on the segment using isoparametric mapping
-            gauss_points = [(0.5 * ((1 - xi) * p0 + (1 + xi) * p1)) for xi in gauss_weights]
-
-            # For each Gauss point:
-            for gp in gauss_points:
-                u_proj = find_closest_u(curve, gp, u_min, u_max) # Project it onto the NURBS curve (via closest-point search)
-                proj_pt = np.array(curve.evaluate_single(u_proj)[:2]) # Evaluate the curve at the optimal u
-                all_gauss_points.append(gp) # Store both original (...)
-                all_projected_points.append(proj_pt) # (...) and projected point
-
-        # Convert to NumPy arrays for easier plotting
-        all_gauss_points = np.array(all_gauss_points)
-        all_projected_points = np.array(all_projected_points)
-
-        # Set up a square plotting window with equal scaling on both axes
-        plt.figure(figsize=(8, 8))
-        plt.axis("equal")
-
-        # Plot 1: original ordered intersection points
-        plt.plot(cut_points_np[:, 0], cut_points_np[:, 1], 'bo-', label='Ordered Cut Points', markersize=3)
-
-        # Plot 2: control points
-        control_points = np.array(curve.ctrlpts)
-        plt.plot(control_points[:, 0], control_points[:, 1], 'ko--', label='Control Points', markersize=5)
-
-        # Plot 3: fitted NURBS curve
-        fitted_points = np.array(curve.evalpts)
-        plt.plot(fitted_points[:, 0], fitted_points[:, 1], 'r-', linewidth=2, label='Fitted NURBS Curve')
-
-        # Plot 4: Gauss points and their projections (color-matched)
-        # Create a list of distinct colors (from the plasma colormap), one for each Gauss point
-        colors = cm.plasma(np.linspace(0, 1, len(all_gauss_points)))
-        # For each Gauss point and its projection:
-        for i, (gp, pp) in enumerate(zip(all_gauss_points, all_projected_points)):
-            plt.plot(gp[0], gp[1], 'o', color=colors[i], label='Gauss Point' if i == 0 else "", markersize=5) # Plot the Gauss point as a colored dot 
-            plt.plot(pp[0], pp[1], 'x', color=colors[i], label='Projection on NURBS' if i == 0 else "", markersize=5) # Plot its projection as a colored "x"
-            plt.plot([gp[0], pp[0]], [gp[1], pp[1]], '--', color=colors[i], linewidth=1) # Draw a dashed line connecting the two
-
-        # Final plot settings
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.title("Gauss Points and Their Projection onto NURBS")
-        plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig("nurbs_gauss_projection_debug.png", dpi=300)
-        plt.show()  # Uncomment for interactive use
-
-        ### Plotting Part 2: local
-        zoom_eid = 9846  # Change this ID to inspect a different element
-
-        # Only continue if that element exists in the intersection data
-        if zoom_eid in element_intersections:
-            # Grab the two interface points for the zoomed-in element
-            p0, p1 = np.array(element_intersections[zoom_eid][0]), np.array(element_intersections[zoom_eid][1])
-            gauss_weights = [-1/np.sqrt(3), 1/np.sqrt(3)]
-            # Compute the two Gauss points for this segment
-            gauss_points = [(0.5 * ((1 - xi) * p0 + (1 + xi) * p1)) for xi in gauss_weights]
-
-            projected_points = []
-            u_min = curve.knotvector[curve.degree]
-            u_max = curve.knotvector[-curve.degree - 1]
-            for gp in gauss_points:
-                u_proj = find_closest_u(curve, gp, u_min, u_max) # Find the closest projections on the curve for the two Gauss points
-                pt_proj = np.array(curve.evaluate_single(u_proj)[:2])
-                projected_points.append(pt_proj)
-
-            gauss_points = np.array(gauss_points)
-            projected_points = np.array(projected_points)
-
-            # Begin zoomed plot
-            plt.figure(figsize=(7, 7))
-            plt.axis("equal")
-
-            # Plot interface segment (cut line) of the element under investigation
-            plt.plot([p0[0], p1[0]], [p0[1], p1[1]], 'b-', label='Interface Segment')
-
-            # Plot control points
-            control_points = np.array(curve.ctrlpts)
-            plt.plot(control_points[:, 0], control_points[:, 1], 'ko--', markersize=5, label='Control Points')
-
-            # Plot Gauss points and projections
-            colors = ['tab:orange', 'tab:green']
-            for i in range(2):
-                gp = gauss_points[i]
-                proj = projected_points[i]
-                plt.plot(gp[0], gp[1], 'o', color=colors[i], label=f'Gauss Pt {i+1}')
-                plt.plot(proj[0], proj[1], 'x', color=colors[i], label=f'Projection {i+1}')
-                plt.plot([gp[0], proj[0]], [gp[1], proj[1]], '--', color=colors[i], linewidth=1)
-
-            # Optional: plot local portion of NURBS
-            plt.plot(fitted_points[:, 0], fitted_points[:, 1], 'r-', linewidth=2, label='Fitted NURBS Curve')
-
-            # Highlight segment ends
-            plt.plot(p0[0], p0[1], 'bo')
-            plt.plot(p1[0], p1[1], 'bo')
-
-            # Set axis limits to zoom tightly around the Gauss/projection segment, adding a 5% margin
-            all_x = np.concatenate([gauss_points[:, 0], projected_points[:, 0], [p0[0], p1[0]]])
-            all_y = np.concatenate([gauss_points[:, 1], projected_points[:, 1], [p0[1], p1[1]]])
-            
-            x_min, x_max = np.min(all_x), np.max(all_x)
-            y_min, y_max = np.min(all_y), np.max(all_y)
-
-            # Apply margin (5% of range)
-            x_margin = 0.05 * (x_max - x_min)
-            y_margin = 0.05 * (y_max - y_min)
-
-            plt.xlim(x_min - x_margin, x_max + x_margin)
-            plt.ylim(y_min - y_margin, y_max + y_margin)
-
-
-            plt.title(f"Zoom on Element {zoom_eid}")
-            plt.xlabel("x")
-            plt.ylabel("y")
-            plt.grid(True)
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig(f"zoom_element_{zoom_eid}.png", dpi=300)
-            plt.show()  # Uncomment for interactive session
-        else:
-            print(f"Element {zoom_eid} not found in intersection data.") """
-
-        ##################### End of Nurbs Fitting ########################
-
-
-        ####################### Normal averaging added ##########################
-        # AW 14.5: normal averaging added
-        # INTERSECTION LENGTH CALCULATION - CORRECT VERSION
-        timestamp = self.main_model_part.ProcessInfo[KratosMultiphysics.TIME]
-        points_filename = f"intersection_points_{timestamp:.6f}.txt"
-        combined_filename = f"intersection_data_{timestamp:.6f}.txt"
-        averaged_normals_filename = f"averaged_normals_{timestamp:.6f}.txt"
-
-        # Step 1: Clear and collect intersection points
-        KratosDroplet.IntersectionPointsUtility.ClearIntersectionPoints()
-        for element in self.main_model_part.Elements:
-            KratosDroplet.IntersectionPointsUtility.CollectElementIntersectionPoints(element)
-
-        # Step 2: Save intersection points to file
-        # KratosDroplet.IntersectionPointsUtility.SaveIntersectionPointsToFile(points_filename)
-        # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, f"Saved intersection points to {points_filename}")
-
-        # Step 3: Calculate and store element intersection lengths
-        num_elements = KratosDroplet.CalculateAndStoreElementIntersectionLengths(self.main_model_part)
-        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-                                            f"Calculated and stored intersection lengths for {num_elements} elements")
-
-        # Step 4: Calculate interface averages
-        KratosDroplet.InterfaceAveragesUtility.ClearInterfaceAverages()
-        KratosDroplet.InterfaceAveragesUtility.ComputeModelPartInterfaceAverages(self.main_model_part)
-
-        # Step 5: Collect intersection data with normals
-        num_elements = KratosDroplet.CollectIntersectionDataWithNormal(self.main_model_part)
-        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-                                            f"Collected {num_elements} elements with intersection data and normals")
-
-        # Step 6: Save the collected data to file
-        # KratosDroplet.SaveIntersectionDataWithNormalToFile(combined_filename)
-        # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-        #                                     f"Saved intersection data with normals to {combined_filename}")
-
-        # Step 7: Set cut normals on elements
-        num_elements_with_normals = KratosDroplet.SetElementCutNormals(self.main_model_part)
-        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__,
-                                           f"Set cut normals for {num_elements_with_normals} elements")
-        
-        # Step 8: Compute averaged normals with 1 neighbor level
-        num_elements_averaged = KratosDroplet.ComputeAndStoreAveragedNormals(
-            self.main_model_part, 2, "ELEMENT_CUT_NORMAL_AVERAGED")
-        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__,
-            f"Computed averaged normals for {num_elements_averaged} elements")
-    
-        # Step 9: Save the averaged normals to file with timestamped filename
-        # KratosDroplet.SaveAveragedNormalsToFile(self.main_model_part, averaged_normals_filename)
-        # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__,
-        #     f"Saved averaged normals to {averaged_normals_filename}")
-        ###############################
-        # Step 4: Read the intersection lengths from elements and save to file
-        # Create a map to pass to SaveIntersectionLengthsToFile
-        intersection_lengths = {}
-        for element in self.main_model_part.Elements:
-            length = KratosDroplet.GetElementIntersectionLength(element)
-            if length > 0.0:  # Only save elements that have a valid intersection length
-                intersection_lengths[element.Id] = length
-    
-        # # Save to file
-        # KratosDroplet.SaveIntersectionLengthsToFile(intersection_lengths, lengths_filename)
-        # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-        #                                    f"Saved {len(intersection_lengths)} intersection lengths to {lengths_filename}")
-        
-
-        # # Save element average normals to file
-        # normals_filename = f"element_normals_{timestamp:.6f}.txt"
-        # KratosDroplet.SaveElementAverageNormalsToFile(self.main_model_part, normals_filename)
-        # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-        #                                     f"Saved element average normals to {normals_filename}")
-        
-        # # Clear any existing intersection points from previous steps
-        # KratosDroplet.IntersectionPointsUtility.ClearIntersectionPoints()
-    
-        # # Collect intersection points from all elements
-        # for element in self.main_model_part.Elements:
-        #     KratosDroplet.IntersectionPointsUtility.CollectElementIntersectionPoints(element)
-        
-        # # # Run diagnostic to check how many elements are split by the level-set
-        # # KratosDroplet.IntersectionPointsUtility.DiagnosticOutput(self.main_model_part)
-    
-        # # Get all intersection points
-        # points = KratosDroplet.IntersectionPointsUtility.GetIntersectionPoints()
-        # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, f"Collected {len(points)} intersection points.")
-    
-        # # Save intersection points to file
-        # KratosDroplet.IntersectionPointsUtility.SaveIntersectionPointsToFile("intersection_points.txt")
-        # AW 14.5: end of the additional normal averaging
-        ####################### End of normal averaging #########################
-
-        # filtering noises is necessary for curvature calculation
-        # distance gradient is used as a boundary condition for smoothing process
-        self._GetDistanceGradientProcess().Execute()
-        self._GetDistanceSmoothingProcess().Execute()
-        KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Smoothing process is finished.")
-
-        # distance gradient is called again to comply with the smoothed/modified DISTANCE
-        self._GetDistanceGradientProcess().Execute()
+        ########### AW 21.5: End of function definitions #############
 
         
-        ####################### second part of normal averaging #######################
-        # AW 14.5: additional normal averaging
-        # for node in self.main_model_part.Nodes:
-        #     gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-        #     gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-        #     gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
-        #     g = (gx**2+gy**2+gz**2)**0.5
-        #     gx /= g
-        #     gy /= g
-        #     gz /= g
-        #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-        #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-        #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
-        #     if node.Y == 0.0:
-        #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,-0.17365)
-        #         if node.X < 0.015:
-        #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, -0.9848)
-        #         elif node.X > 0.015:
-        #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.9848)
-        contact_angle = 0
-        for node in self.main_model_part.Nodes:
-            if node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0) != 0.0:
-                contact_angle = node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0)
-
-        diff = abs(contact_angle - 100)
-        if diff < 1:
-            beta = 1
-        elif diff > 9:
-            beta = 0
-        else:
-            beta = 0.5*(1+math.cos(3.1416*(diff-1.0)/8))
-        print("beta=",beta)
-
-        for node in self.main_model_part.Nodes:
-            gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-            gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-            gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
-            g = (gx**2+gy**2+gz**2)**0.5
-            gx /= g
-            gy /= g
-            gz /= g
-            # node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-            # node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-            # node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
-            if node.Y == 0.0:
-                if beta > 0.0:
-                    gy = math.cos(contact_angle*3.1416/180) + beta*(math.cos(100.0*3.1416/180)- math.cos(contact_angle*3.1416/180))
-                    if node.X > 0.015:
-                        gx = math.sin(contact_angle*3.1416/180) + beta*(math.sin(100.0*3.1416/180)- math.sin(contact_angle*3.1416/180))
-                    elif node.X < 0.015:
-                        gx = -(math.sin(contact_angle*3.1416/180) + beta*(math.sin(100.0*3.1416/180)- math.sin(contact_angle*3.1416/180)))
-
-                    g = (gx**2+gy**2+gz**2)**0.5
-
-                    # node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx/g)
-                    # node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy/g)
-                    # node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz/g)
-
-
-            # if node.Y == 0.0:
-            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0.50754)
-            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,0.0)
-            #     if node.X < 0.015:
-            #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,-0.86163)
-            #     elif node.X > 0.015:
-            #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.86163)
-
-        # nx1=-1
-        # nx2=1
-        # ny1=ny2=0
-        # for node in self.main_model_part.Nodes:
-        #     nx=ny=0
-        #     if node.Is(KratosMultiphysics.BOUNDARY):
-        #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
-        #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
-        #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-        #         if -0.001<diss <0.001 and 0.5 < (nx**2 + ny**2)**0.5:
-        #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-        #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-        #             if node.X < 0.015:
-        #                 nx1 = nx
-        #                 ny1 = ny
-        #                 if node.Is(KratosMultiphysics.BOUNDARY):
-        #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
-        #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
-        #                 else:
-        #                     nx1 = (3*nx1-gx)/2
-        #                     ny1 = (3*ny1-gy)/2
-        #             elif node.X > 0.015:
-        #                 nx2 = nx
-        #                 ny2 = ny
-        #                 if node.Is(KratosMultiphysics.BOUNDARY):
-        #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
-        #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
-        #                 else:
-        #                     nx2 = (3*nx2-gx)/2
-        #                     ny2 = (3*ny2-gy)/2
-
-
-        
-        # for node in self.main_model_part.Nodes:
-        #     if node.Is(KratosMultiphysics.BOUNDARY):
-        #         if node.Y == 0.0:
-        #             if node.X < 0.015:
-        #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx1)
-        #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny1)
-        #             elif node.X > 0.015:
-        #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx2)
-        #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny2)
-        #################################################################################################
-
-
-        # for node in self.main_model_part.Nodes:
-        #     if node.Is(KratosMultiphysics.BOUNDARY):
-        #         gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-        #         gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-        #         if gx > 0.0:
-        #             nx = 0.9848
-        #         elif gx < 0.0:
-        #             nx = -0.9848
-        #         if gy > 0.0:
-        #             ny = 0.1736
-        #         elif gy < 0.0:
-        #             ny = -0.1736
-        #         if gx != 0.0 or gy != 0.0:
-        #             g = (gx**2+gy**2)**(0.5)
-        #             gx = nx * g
-        #             gy = ny *g
-        #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-        #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-
-        # nx1=-1
-        # nx2=1
-        # ny1=ny2=0
-        # for node in self.main_model_part.Nodes:
-        #     nx=ny=0
-        #     if node.Is(KratosMultiphysics.BOUNDARY):
-        #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
-        #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
-        #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-        #         if -0.001<diss <0.001 and 0.5<=(nx**2 + ny**2)**0.5:
-        #             if node.X < 0.015:
-        #                 nx1 = nx
-        #                 ny1 = ny
-        #             elif node.X > 0.015:
-        #                 nx2 = nx
-        #                 ny2 = ny
-
-        # for node in self.main_model_part.Nodes:
-        #     if node.Is(KratosMultiphysics.BOUNDARY):
-        #         if node.Y == 0.0:
-        #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-        #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-        #             g = (gx**2+gy**2)**(0.5)
-        #             diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-        #             if node.X < 0.015 and -0.001 < diss < 0.001:
-        #                 gx = nx1 * g
-        #                 gy = ny1 *g
-        #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx1)
-        #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny1)
-        #             elif node.X > 0.015 and -0.001 < diss < 0.001:
-        #                 gx = nx2 * g
-        #                 gy = ny2 *g
-        #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx2)
-        #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny2)
-        #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-        #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-        # AW 14.5: end of additional normal averaging
-        ####################### end of second part of normal averaging ###################
-
-       
-
-
-        # self.ExtrapolateBoundaryValues(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-        # self.ExtrapolateBoundaryValues(KratosMultiphysics.DISTANCE_GRADIENT_X)
-
-        # curvature is calculated using nodal distance gradient
-        self._GetDistanceCurvatureProcess().Execute()
 
         # AW 8.5 Merge (Outcommented for now, purely for visualization)
         # Curvature correction (If needed)
         """ if ( self.settings["convection_diffusion_settings"]["Perform_conservative_law"].GetBool() == True ):
             self._Curvature_Correction() """
+        
+         # it is needed to store level-set consistent nodal PRESSURE_GRADIENT for stabilization purpose
+        self._GetConsistentNodalPressureGradientProcess().Execute()
 
+        # TODO: Performing mass conservation check and correction process
+
+        # Perform distance correction to prevent ill-conditioned cuts
+        self._GetDistanceModificationProcess().ExecuteInitializeSolutionStep()
+
+
+
+        # AW 15.5: everything related to inters points, fitting, normal averaging AFTER the distance modification process as of now!!!
+        # AW 19.5: Added user-defined fitting settings
+
+        # AW 19.5: Reload fitting settings from ProcessInfo
+        fitting_type = self.main_model_part.ProcessInfo[KratosDroplet.FittingType]
+        normal_evaluation_mode = self.main_model_part.ProcessInfo[KratosDroplet.NormalEvaluationMode]
+
+        # AW 19.5: Only run Intersection Points utility if fitting_type is explicitly set to "nurbs" (needed for nurbs fitting) or normal_evaluation_mode==3 (needed for normal averaging)
+        # AW 22.5: also add this boolean, as we need intersection points also for curvature smoothing
+        do_curvature_smoothing = False
+        if fitting_type == "nurbs" or normal_evaluation_mode == 2 or normal_evaluation_mode == 3 or do_curvature_smoothing:
+            # Debug print: delete once it works
+            print(f"IntersectionPointsUtility is executed because fitting_type = '{fitting_type}' or normal_evaluation_mode = {normal_evaluation_mode}.")
+  
+            # Clear any existing intersection points from previous steps
+            KratosDroplet.IntersectionPointsUtility.ClearIntersectionPoints()
+        
+            # Collect intersection points from all elements
+            for element in self.main_model_part.Elements:
+                KratosDroplet.IntersectionPointsUtility.CollectElementIntersectionPoints(element)
+            
+            # AW 5.5: Run diagnostic to check how many elements are split by the level-set; Delete once not needed anymore
+            KratosDroplet.IntersectionPointsUtility.DiagnosticOutput(self.main_model_part)
+        
+            # Get all intersection points
+            points = KratosDroplet.IntersectionPointsUtility.GetIntersectionPoints()
+            KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, f"Collected {len(points)} intersection points.")
+        
+            # Save intersection points to file
+            KratosDroplet.IntersectionPointsUtility.SaveIntersectionPointsToFile("intersection_points.txt")
+
+        # AW 19.5: only run nurbs fitting block if fitting method was explicitly set to nurbs
+        # AW 27.5: adapted such that it is also run for normal evaluation mode 2
+        if fitting_type == "nurbs" or normal_evaluation_mode == 2:
+            # Debug statement: delete once it works
+            print("NURBS fitting is executed because fitting_type is set to 'nurbs'.")
+
+
+            ##################### Beginning of Nurbs Fitting ########################
+            # AW 27.4: outcomment legacy (non Nurbs based) curve fitting + curvature/normal computation approaches
+            """ # Fit curves to the points on an element-by-element basis
+            KratosDroplet.IntersectionPointsUtility.ProcessIntersectionPointsAndFitCurves("element_curves.txt")
+            KratosDroplet.IntersectionPointsUtility.ProcessIntersectionPointsAndFitCurvesparabola("element_curves_parabola.txt")
+
+            # AW 9.4: Ensure curvature file is cleared before writing
+            open("element_curvatures_simplified.csv", "w").close()
+
+            KratosDroplet.CurvatureFittingUtility.ComputeFittedCurvatures(
+                "element_curves_parabola.txt",
+                "element_curves.txt",
+                "intersection_points.txt",
+                # AW 15.4: new input files
+                "element_points_original.txt",
+                "element_points_rotated.txt",
+                "element_curvatures_simplified.csv"
+            )
+
+            KratosDroplet.CurvatureFittingUtility.LoadCurvatureCSV("element_curvatures_simplified.csv")
+
+            # AW 10.4: Ensure averaged normals file is cleared before writing
+            open("averaged_normals.csv", "w").close()
+
+            # AW 10.4: Compute fitted normals and write to file
+            from KratosMultiphysics.DropletDynamicsApplication import NormalComputationUtility
+            NormalComputationUtility.ComputeAveragedNormals(
+                "element_curves_parabola.txt",
+                "intersection_points.txt",
+                "element_points_rotated.txt",
+                "averaged_normals.csv"
+            )
+            KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Averaged normals computed and saved.")
+
+            # AW 11.4: Load fitted normals once per time step
+            NormalComputationUtility.LoadNormalCSV("averaged_normals.csv")
+            KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Averaged normals loaded.") """
+            
+
+
+            # AW_C 26.4: Reads the file intersection_points.txt as a table, using tab characters as separators.
+            data = pd.read_csv('intersection_points.txt', sep="\t")
+            # AW-C 26.4: would sort data by the X column
+            # data.sort_values(by='X', inplace=True)
+            # would print basic statistics about the data
+            # data.describe()
+            # would extract the X and Y columns as a list of coordinate pairs
+            # pts = (data[['X', 'Y']].values).tolist()
+            # would remove duplicate points from that list
+            # cut_points = np.unique(pts, axis=0).tolist()
+            # AW-C 26.4: function that takes raw intersection points and orders them into continuous interface lines (contours)
+            contours = order_interface_contour(data)
+            # AW-C 26.4: picks the first contour (in case there are several disconnected ones); assumes one interface currently
+            cut_points = contours[0]
+            # AW-C 26.4: now a list of [x, y] coordinates tracing the interface, in order
+            # print(cut_points)
+
+
+            # ─────────────────────────────────────────────────────────────────────────────
+            # 2.2. Global NURBS interpolation
+            # AW-C 26.4:means we fit a quadratic NURBS curve (parabolic segments) 
+            degree = 2  # cubic NURBS
+            # AW-C 26.4: sets the number of control points for the NURBS curve (this controls the flexibility of the fit)
+            # AW-I 26.4: we could use some optimization to check what number of control points gives best fit (could be repeated e.g. every 50 time steps, similar to whats done in parallel redistancing)
+            ctrlpts_size=27# len(data)//2
+            # try:
+            # AW-C 26.4: Attempts to do an exact interpolating NURBS fit (with fallback on error)  
+            # curve = fitting.interpolate_curve(cut_points, degree=degree) #, centripetal=True global fit 
+            # except ZeroDivisionError:
+            #     # fallback to approximation
+            #     LeastSquares fit
+            # AW-C 26.4: actual code uses an approximate fit (least squares) with the given control point number and degree, which is more robust for noisy or incomplete data
+            print("Entering into curve fitting.")
+            print("Entering into curve fitting.")
+            # AW 13.5: updated to use less control points in case least squares fitting values due to ill-conditioning
+            success = False
+            max_attempts = ctrlpts_size - 5  # number of fallback attempts allowed
+            for offset in range(max_attempts + 1):  # try with ctrlpts_size, ctrlpts_size-1, ...
+                try:
+                    current_ctrlpts_size = ctrlpts_size - offset
+                    if current_ctrlpts_size < 6:
+                        print("[ERROR] Cannot fit curve: control point count dropped below 6.")
+                        break
+                    print(f"Trying with ctrlpts_size = {current_ctrlpts_size}")
+                    curve = fitting.approximate_curve(cut_points, degree=degree, ctrlpts_size=current_ctrlpts_size)
+                    print("Curve fitting done.")
+                    success = True
+                    break
+                except ZeroDivisionError:
+                    print(f"[WARNING] Curve fitting failed with ctrlpts_size = {current_ctrlpts_size}, trying fewer points...")
+
+            if not success:
+                raise RuntimeError("Curve fitting failed for all attempted control point sizes.")
+
+            print("Curve fitting done.")
+
+            # AW-C 26.4: curve.delta sets the sampling resolution when evaluating the curve (smaller = more points, higher detail).
+            curve.delta = 0.0001  # evaluation resolution
+            # AW-C 26.4: curve.vis attaches a 2D visualization object for plotting
+            # curve.vis = vis.VisCurve2D()
+            # Refine knot vector
+            # AW-C 26.4: (Commented out): One could refine the NURBS knot vector for better control point influence, but it’s unused here
+            # operations.refine_knotvector(curve, [1])
+            # AW-C 26.4. plot the curve
+            # fig = curve.render()
+
+            # Convert contour to NumPy array
+            cut_points_np = np.array(cut_points)
+
+            """ # AW 2.5: this part added for debug visualization
+            # Ensure curve is evaluated at high resolution
+            curve.evaluate()
+
+            # Fitted NURBS curve points
+            fitted_points = np.array(curve.evalpts)  # evaluated using delta = 0.01
+
+            # Control points
+            control_points = np.array(curve.ctrlpts)  # shape (ctrlpts_size, 2)
+
+            # Plot all in one figure
+            plt.figure(figsize=(6, 6))
+            plt.axis("equal")
+
+            # 2. Fitted NURBS curve
+            plt.plot(fitted_points[:, 0], fitted_points[:, 1], 'r-', linewidth=2, label='Fitted NURBS Curve')
+
+            # 1. Original ordered cut points (interface contour)
+            plt.plot(cut_points_np[:, 0], cut_points_np[:, 1], 'bo-', markersize=3, label='Ordered Cut Points')
+
+            # 3. Control points
+            plt.plot(control_points[:, 0], control_points[:, 1], 'ko--', label='Control Points', markersize=4)
+
+            # Labels and legend
+            plt.title("NURBS Fitting of Interface Contour")
+            plt.xlabel("x")
+            plt.ylabel("y")
+            plt.grid(True)
+            plt.legend()
+            plt.tight_layout()
+
+            # Save and show
+            plt.savefig("interface_fitting_nurbs_debug.png", dpi=300)
+            # plt.show() """
+
+
+            # AW 5.5: outcommented the part where curvature+normal where stored nodally as a rough approximation
+            """   # sample densely along the curve for closest-point search
+            # AW 29.4: outcommented, as of now, no more dense sampling and closest point search (expensive and inaccurate)
+            u_start, u_end = curve.knotvector[degree], curve.knotvector[-degree-1]
+            print("Starting sampling: ")
+            us_dense = np.linspace(u_start, u_end, 1000)
+            print("Evaluating pointwise curvature: ")
+            curve_points_dense = np.array([curve.evaluate_single(u)[:2] for u in us_dense]) 
+            # Compute chord-length-based parametric values for the original points
+            #  selects the first interface line; cut_points is now a list of 2D coordinates 
+            cut_points = contours[0]
+            # Converts the list to a NumPy array of shape (N, 2), where N is the number of points
+            cut_points_np = np.array(cut_points)
+            # If cut_points_np = [[x0,y0], [x1,y1], [x2,y2]], then:
+            # diffs=[[x1−x0,y1−y0],[x2−x1,y2−y1],...]
+            # Shape becomes (N-1, 2)
+            diffs = np.diff(cut_points_np, axis=0)
+            # Computes Euclidean distance between each consecutive pair
+            # gives the segment length between every two neighboring points
+            dists = np.linalg.norm(diffs, axis=1)
+            # Computes the cumulative sum of the segment lengths
+            # E.g., [d0, d0+d1, d0+d1+d2, ...]
+            # np.insert(..., 0, 0.0) prepends a zero at the start, meaning the first point has zero arc length
+            arc_lengths = np.insert(np.cumsum(dists), 0, 0.0)
+            # total_length is the full length of the interface curve.
+            total_length = arc_lengths[-1]
+            # param_values is the normalized arc-length parameter for each point
+            # ui​=total arc length up to i​∈[0,1]
+            # used as parameter values for evaluating the NURBS curve at the original points
+            param_values = arc_lengths / total_length  # normalized u values in [0, 1]
+
+
+            # 4. Prepare output lists
+            out_element_id = []
+            out_point_id = []
+            out_x = []
+            out_y = []
+            out_u = []
+            out_curv = []
+            out_nx = []
+            out_ny = []
+            out_theta = []
+
+            # AW 29.4: adapted, now looping directly through the ordered cut points
+            # Build lookup to get Element_ID and Point_ID by matching (X, Y) from DataFrame (intersection_points.txt)
+            meta_lookup = {
+                (round(row['X'], 12), round(row['Y'], 12)): (row['Element_ID'], row['Point_ID'])
+                for _, row in data.iterrows()
+            }
+            # output dictionary looking something like this:
+            #{
+            #(0.001234567890, 0.002345678901): (42, 0),
+            # ...
+            #}
+
+            # Loops over each point along the ordered interface contour (previously produced by order_interface_contour())
+            # i is the index, used to retrieve the corresponding parameter value from param_values
+            for i, (x0, y0) in enumerate(cut_points):
+                # Grabs the normalized arc length (∈ [0, 1]) corresponding to this interface point
+                # used to evaluate the NURBS curve at the right location
+                u_closest = param_values[i]
+
+                # Evaluate NURBS derivatives
+                d0, d1, d2 = curve.derivatives(u_closest, order=2)
+                x1, y1 = d1[0], d1[1]
+                x2, y2 = d2[0], d2[1]
+                num = abs(x1*y2 - y1*x2)
+                den = (x1**2 + y1**2)**1.5
+                curvature = num / den if den != 0 else 0.0
+                tnorm = np.hypot(x1, y1)
+                nx, ny = y1 / tnorm, -x1 / tnorm if tnorm != 0 else (0.0, 0.0)
+                normal = (-nx, -ny)
+                theta = np.rad2deg(np.arctan2(normal[1], normal[0]))
+
+                # Recover element and point ID from lookup
+                # Reconstructs the lookup key to find the associated Element_ID and Point_ID
+                # Try exact match first
+                # AW 30.4: adapted to include nearest neighbour search for points where exact coordinates wasnt found
+                key = (round(x0, 12), round(y0, 12))
+                if key in meta_lookup:
+                    elem_id, pt_id = meta_lookup[key]
+                else:
+                    # Fallback to nearest match by Euclidean distance
+                    coords_array = np.array(list(meta_lookup.keys()))
+                    distances = np.linalg.norm(coords_array - np.array([x0, y0]), axis=1)
+                    min_idx = np.argmin(distances)
+                    if distances[min_idx] < 1e-10:  # choose a suitable tolerance
+                        elem_id, pt_id = list(meta_lookup.values())[min_idx]
+                    else:
+                        raise ValueError(f"Could not find metadata for point ({x0}, {y0}) — even with fallback search.")
+
+                # Store everything
+                out_element_id.append(elem_id)
+                out_point_id.append(pt_id)
+                out_x.append(x0)
+                out_y.append(y0)
+                out_u.append(u_closest)
+                out_curv.append(curvature)
+                out_nx.append(normal[0])
+                out_ny.append(normal[1])
+                out_theta.append(theta)
+
+            # 5. Loop over the DataFrame rows
+            for _, row in data.iterrows():
+                # AW 29.4: outcommented, as of now, no more dense sampling and closest point search (expensive and inaccurate)
+                x0, y0 = row['X'], row['Y']
+                dists = np.linalg.norm(curve_points_dense - np.array([x0, y0]), axis=1)
+                idx_closest = np.argmin(dists)
+                u_closest = us_dense[idx_closest] 
+
+
+                # Calculate NURBS properties at this location
+                d0, d1, d2 = curve.derivatives(u_closest, order=2)
+                x1, y1 = d1[0], d1[1]
+                x2, y2 = d2[0], d2[1]
+                num = abs(x1*y2 - y1*x2)
+                den = (x1**2 + y1**2)**1.5
+                curvature = num / den if den != 0 else 0.0
+                tnorm = np.hypot(x1, y1)
+                nx, ny = y1 / tnorm, -x1 / tnorm if tnorm != 0 else (0.0, 0.0)
+                normal = (-nx, -ny)
+                theta = np.rad2deg(np.arctan2(normal[1], normal[0]))
+
+                # Store original identifiers and results
+                out_element_id.append(row['Element_ID'])
+                out_point_id.append(row['Point_ID'])
+                out_x.append(x0)
+                out_y.append(y0)
+                out_u.append(u_closest)
+                out_curv.append(curvature)
+                out_nx.append(normal[0])
+                out_ny.append(normal[1])
+                out_theta.append(theta) 
+
+            # 6. Build the output DataFrame
+            output_df = pd.DataFrame({
+                "Element_ID": out_element_id,
+                "Point_ID": out_point_id,
+                "X": out_x,
+                "Y": out_y,
+                "u": out_u,
+                "curvature": out_curv,
+                "normal_x": out_nx,
+                "normal_y": out_ny,
+                "theta_deg": out_theta
+            })
+
+            output_df.to_csv("curve_normals_curvature_at_intersection_points.csv", index=False)
+            print("Saved curvature and normals at intersection points to curve_normals_curvature_at_intersection_points.csv") """
+
+
+
+            ###### AW 2.5: added this part to compute and store curvature at Gauss Points elementally
+            # ─────────────────────────────────────────────────────────────────────────────
+
+
+            # Load intersection points from file (already done above as `data`)
+            # Group intersection points per element
+            # creates a defaultdict from the collections module
+            # If you try to access a key that doesn't exist, it will automatically create an empty list as the default value
+            # dictionary will map: element ID → list of intersection points (tuples like (x, y))
+            element_intersections = defaultdict(list)
+            # Iterates over each row of the data DataFrame
+            # data.iterrows() returns a (row_index, row_data) tuple
+            # underscore _ means we’re ignoring the row index — only row (a Pandas Series) matters
+            for _, row in data.iterrows():
+                # Extracts the element ID from the row and casts it to an integer
+                # ID will be used as the key in the element_intersections dictionary
+                eid = int(row['Element_ID'])
+                # Extracts the x and y coordinates from the row and stores them as a tuple
+                point = (row['X'], row['Y'])
+                # Appends this (x, y) point to the list associated with eid in element_intersections
+                # If this is the first time eid appears, the defaultdict automatically creates a new list
+                element_intersections[eid].append(point)
+
+            # Initializes a dictionary to store curvature and normal values per element
+            # Keys will be element IDs, and values will be dictionaries like:
+            # { "curvatures": [k1, k2], "normals": [(nx1, ny1), (nx2, ny2)] }
+            element_gp_data = {}
+
+            # Opens the file "element_gp_curvatures_normals.csv" in write mode; f is the file handle
+            with open("element_gp_curvatures_normals.csv", "w") as f:
+                # Writes the header row for the CSV file
+                f.write("ElementID,kappa1,kappa2,nx1,ny1,nx2,ny2,gp1_x,gp1_y,gp2_x,gp2_y\n")
+
+                # Loops through each element ID (eid) and its associated list of intersection points (pts)
+                for eid, pts in element_intersections.items():
+                    # Only processes elements that have exactly 2 intersection points (actually not needed, as every element has two intersection points anyways for our current configuration)
+                    if len(pts) != 2:
+                        continue  # skip degenerate elements
+                    
+                    # Converts the two intersection points to NumPy arrays for vector math;
+                    # p0 and p1 are the endpoints of the interface segment in this element
+                    p0, p1 = np.array(pts[0]), np.array(pts[1])
+
+                    # Gauss points in natural coords: ξ = ±1/√3
+                    # standard Gauss-Legendre quadrature points for a linear element
+                    gauss_weights = [-1/np.sqrt(3), 1/np.sqrt(3)]
+                    # Maps each natural coordinate ξ to a physical Gauss point on the interface segment [p0, p1] using linear interpolation
+                    # uses the isoparametric mapping from reference element to physical space.
+                    gauss_points = [(0.5 * ((1 - xi) * p0 + (1 + xi) * p1)) for xi in gauss_weights]
+
+                    # Initializes lists to store the computed curvature and normal vector for each Gauss point
+                    curvatures = []
+                    normals = []
+
+                    # Store the actual coordinates of each Gauss point
+                    gp_coords = []
+
+                    # Loops over the two Gauss points just computed
+                    for gp in gauss_points:
+                        # Project gp to NURBS parametric space by arc-length (approximate)
+                        # AW 5.5: old code, outcommented
+                        """ dists = np.linalg.norm(cut_points_np - gp, axis=1)
+                        idx_closest = np.argmin(dists)
+                        u_gp = param_values[idx_closest]  # uses precomputed arc-length params """
+                        # we skip evaluating at the exact endpoints by using the inner range:
+                        # u_min = curve.knotvector[p] → the first non-clamped parameter
+                        # u_max = curve.knotvector[-p - 1] → the last non-clamped parameter
+                        u_min = curve.knotvector[curve.degree]
+                        u_max = curve.knotvector[-curve.degree - 1]
+                        # Returns the parametric coordinate u_gp of the closest point on the curve
+                        u_gp = find_closest_u(curve, gp, u_min=u_min, u_max=u_max)
+
+                        # Computes the 0th, 1st, and 2nd derivatives of the NURBS curve at parameter u_gp
+                        # d1 is the tangent vector
+                        # d2 is the second derivative (used for curvature)
+                        d0, d1, d2 = curve.derivatives(u_gp, order=2)
+                        # Extracts the x and y components of the first and second derivatives
+                        x1, y1 = d1[0], d1[1]
+                        x2, y2 = d2[0], d2[1]
+                        # Computes 2D curvature at that point using the standard formula
+                        num = abs(x1 * y2 - y1 * x2)
+                        den = (x1 ** 2 + y1 ** 2) ** 1.5
+                        # Avoids division by zero if the denominator is zero
+                        curvature = num / den if den != 0 else 0.0
+                        # Computes the normal vector as perpendicular to the tangent
+                        # computes the Euclidean norm (or length) of the 2D vector
+                        tnorm = np.hypot(x1, y1)
+                        # AW 27.5: change this to see if normal direction changes accordingly
+                        # nx, ny = (-y1 / tnorm, x1 / tnorm) if tnorm != 0 else (0.0, 0.0) 
+                        # old line
+                        nx, ny = (y1 / tnorm, -x1 / tnorm) if tnorm != 0 else (0.0, 0.0) # outward unit normal
+                        normal = (nx, ny)  
+
+                        curvatures.append(curvature)
+                        normals.append(normal)
+                        gp_coords.append(gp)  # store actual gauss point (x, y)
+
+                    # Save to dictionary for elemental assignment
+                    element_gp_data[eid] = {
+                        "curvatures": curvatures,
+                        "normals": normals
+                    }
+
+                    # Write to file
+                    k1, k2 = curvatures
+                    (nx1, ny1), (nx2, ny2) = normals
+                    (gp1_x, gp1_y), (gp2_x, gp2_y) = gp_coords
+
+                    f.write(f"{eid},{k1},{k2},{nx1},{ny1},{nx2},{ny2},{gp1_x},{gp1_y},{gp2_x},{gp2_y}\n")
+
+            print("Saved curvature and normals at Gauss points to element_gp_curvatures_normals.csv")
+
+            # AW 2.5: Debug, delete!
+            if 9581 in element_gp_data:
+                print(f"Element 9581 found in element_gp_data:")
+                print("Curvatures:", element_gp_data[9581]["curvatures"])
+                print("Normals:", element_gp_data[9581]["normals"])
+            else:
+                print("Element 9581 NOT found in element_gp_data!")
+
+
+            # Loops through all elements in the main_model_part (the computational mesh in Kratos)
+            for element in self.main_model_part.Elements:
+                # Retrieves the element ID for the current element. This will match the keys in element_gp_data
+                eid = element.Id
+                # If this element doesn't have any stored Gauss point data (e.g., it wasn't cut by the interface), skip it
+                if eid not in element_gp_data:
+                    continue
+                
+                # Retrieves the list of two curvature values and the list of two normal vectors for this element (one for each Gauss point)
+                curvatures = element_gp_data[eid]["curvatures"]
+                normals = element_gp_data[eid]["normals"]
+
+                # Stores the curvature at Gauss point 1 and 2 as element-level scalar values using Kratos’ SetValue() function 
+                element.SetValue(KratosDroplet.CURVATURE_FITTED_GAUSS1, curvatures[0])
+                element.SetValue(KratosDroplet.CURVATURE_FITTED_GAUSS2, curvatures[1])
+                # does the same for normals; [*normals[0], 0.0] expands the 2D tuple (nx, ny) into a 3D vector by adding a 0 in the z-direction (since Kratos expects 3D vectors even in 2D problems)
+                element.SetValue(KratosDroplet.NORMAL_FITTED_GAUSS1, [*normals[0], 0.0])
+                element.SetValue(KratosDroplet.NORMAL_FITTED_GAUSS2, [*normals[1], 0.0])
+
+                print(f"Element {eid} - kappa1 = {element.GetValue(KratosDroplet.CURVATURE_FITTED_GAUSS1)}, kappa2 = {element.GetValue(KratosDroplet.CURVATURE_FITTED_GAUSS2)}")
+
+
+            # AW 5.5.: commented, nodal storage is legacy
+            """ # AW 26.4: now store curvatures and normals nodally 
+            df = pd.read_csv('curve_normals_curvature_at_intersection_points.csv')
+            element_curvature = dict(zip(df['Element_ID'], df['curvature']))
+            element_normal_x = dict(zip(df['Element_ID'], df['normal_x']))
+            element_normal_y = dict(zip(df['Element_ID'], df['normal_y']))
+
+            for element in self.main_model_part.Elements:
+                element_id = element.Id
+                if element_id in element_curvature:
+                    curvature = float(element_curvature[element_id])
+                    normal_x = float(element_normal_x[element_id])
+                    normal_y = float(element_normal_y[element_id])
+                    for node in element.GetNodes():
+                        node.SetValue(KratosDroplet.FITTED_CURVATURE, curvature)
+                        node.SetValue(KratosDroplet.FITTED_NORMAL, [normal_x, normal_y, 0.0]) """
+            
+            """ # AW 5.5: debug plotting part for code validation
+
+            ### Plotting Part 1: global
+
+            # Collect all Gauss points and projected points from the NURBS fitting
+            # Initialize two lists to store:
+            all_gauss_points = []  # Gauss points on interface segments
+            all_projected_points = [] # Their corresponding (closest point) "projections" on the NURBS
+
+            # Extract the valid parameter range of the NURBS curve (excluding clamped ends) so we stay within a well-defined region when evaluating or projecting points
+            u_min = curve.knotvector[curve.degree]
+            u_max = curve.knotvector[-curve.degree - 1]
+
+            # Iterate over each element that has exactly two intersection points (i.e., properly cut by the level set)
+            for eid, pts in element_intersections.items():
+                if len(pts) != 2:
+                    continue
+                
+                # Convert the two intersection points of the element to NumPy arrays (endpoints of the interface segment)
+                p0, p1 = np.array(pts[0]), np.array(pts[1])
+                gauss_weights = [-1/np.sqrt(3), 1/np.sqrt(3)]
+                # Compute the physical positions of two Gauss points on the segment using isoparametric mapping
+                gauss_points = [(0.5 * ((1 - xi) * p0 + (1 + xi) * p1)) for xi in gauss_weights]
+
+                # For each Gauss point:
+                for gp in gauss_points:
+                    u_proj = find_closest_u(curve, gp, u_min, u_max) # Project it onto the NURBS curve (via closest-point search)
+                    proj_pt = np.array(curve.evaluate_single(u_proj)[:2]) # Evaluate the curve at the optimal u
+                    all_gauss_points.append(gp) # Store both original (...)
+                    all_projected_points.append(proj_pt) # (...) and projected point
+
+            # Convert to NumPy arrays for easier plotting
+            all_gauss_points = np.array(all_gauss_points)
+            all_projected_points = np.array(all_projected_points)
+
+            # Set up a square plotting window with equal scaling on both axes
+            plt.figure(figsize=(8, 8))
+            plt.axis("equal")
+
+            # Plot 1: original ordered intersection points
+            plt.plot(cut_points_np[:, 0], cut_points_np[:, 1], 'bo-', label='Ordered Cut Points', markersize=3)
+
+            # Plot 2: control points
+            control_points = np.array(curve.ctrlpts)
+            plt.plot(control_points[:, 0], control_points[:, 1], 'ko--', label='Control Points', markersize=5)
+
+            # Plot 3: fitted NURBS curve
+            fitted_points = np.array(curve.evalpts)
+            plt.plot(fitted_points[:, 0], fitted_points[:, 1], 'r-', linewidth=2, label='Fitted NURBS Curve')
+
+            # Plot 4: Gauss points and their projections (color-matched)
+            # Create a list of distinct colors (from the plasma colormap), one for each Gauss point
+            colors = cm.plasma(np.linspace(0, 1, len(all_gauss_points)))
+            # For each Gauss point and its projection:
+            for i, (gp, pp) in enumerate(zip(all_gauss_points, all_projected_points)):
+                plt.plot(gp[0], gp[1], 'o', color=colors[i], label='Gauss Point' if i == 0 else "", markersize=5) # Plot the Gauss point as a colored dot 
+                plt.plot(pp[0], pp[1], 'x', color=colors[i], label='Projection on NURBS' if i == 0 else "", markersize=5) # Plot its projection as a colored "x"
+                plt.plot([gp[0], pp[0]], [gp[1], pp[1]], '--', color=colors[i], linewidth=1) # Draw a dashed line connecting the two
+
+            # Final plot settings
+            plt.xlabel("x")
+            plt.ylabel("y")
+            plt.title("Gauss Points and Their Projection onto NURBS")
+            plt.grid(True)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig("nurbs_gauss_projection_debug.png", dpi=300)
+            plt.show()  # Uncomment for interactive use
+
+            ### Plotting Part 2: local
+            zoom_eid = 9846  # Change this ID to inspect a different element
+
+            # Only continue if that element exists in the intersection data
+            if zoom_eid in element_intersections:
+                # Grab the two interface points for the zoomed-in element
+                p0, p1 = np.array(element_intersections[zoom_eid][0]), np.array(element_intersections[zoom_eid][1])
+                gauss_weights = [-1/np.sqrt(3), 1/np.sqrt(3)]
+                # Compute the two Gauss points for this segment
+                gauss_points = [(0.5 * ((1 - xi) * p0 + (1 + xi) * p1)) for xi in gauss_weights]
+
+                projected_points = []
+                u_min = curve.knotvector[curve.degree]
+                u_max = curve.knotvector[-curve.degree - 1]
+                for gp in gauss_points:
+                    u_proj = find_closest_u(curve, gp, u_min, u_max) # Find the closest projections on the curve for the two Gauss points
+                    pt_proj = np.array(curve.evaluate_single(u_proj)[:2])
+                    projected_points.append(pt_proj)
+
+                gauss_points = np.array(gauss_points)
+                projected_points = np.array(projected_points)
+
+                # Begin zoomed plot
+                plt.figure(figsize=(7, 7))
+                plt.axis("equal")
+
+                # Plot interface segment (cut line) of the element under investigation
+                plt.plot([p0[0], p1[0]], [p0[1], p1[1]], 'b-', label='Interface Segment')
+
+                # Plot control points
+                control_points = np.array(curve.ctrlpts)
+                plt.plot(control_points[:, 0], control_points[:, 1], 'ko--', markersize=5, label='Control Points')
+
+                # Plot Gauss points and projections
+                colors = ['tab:orange', 'tab:green']
+                for i in range(2):
+                    gp = gauss_points[i]
+                    proj = projected_points[i]
+                    plt.plot(gp[0], gp[1], 'o', color=colors[i], label=f'Gauss Pt {i+1}')
+                    plt.plot(proj[0], proj[1], 'x', color=colors[i], label=f'Projection {i+1}')
+                    plt.plot([gp[0], proj[0]], [gp[1], proj[1]], '--', color=colors[i], linewidth=1)
+
+                # Optional: plot local portion of NURBS
+                plt.plot(fitted_points[:, 0], fitted_points[:, 1], 'r-', linewidth=2, label='Fitted NURBS Curve')
+
+                # Highlight segment ends
+                plt.plot(p0[0], p0[1], 'bo')
+                plt.plot(p1[0], p1[1], 'bo')
+
+                # Set axis limits to zoom tightly around the Gauss/projection segment, adding a 5% margin
+                all_x = np.concatenate([gauss_points[:, 0], projected_points[:, 0], [p0[0], p1[0]]])
+                all_y = np.concatenate([gauss_points[:, 1], projected_points[:, 1], [p0[1], p1[1]]])
+                
+                x_min, x_max = np.min(all_x), np.max(all_x)
+                y_min, y_max = np.min(all_y), np.max(all_y)
+
+                # Apply margin (5% of range)
+                x_margin = 0.05 * (x_max - x_min)
+                y_margin = 0.05 * (y_max - y_min)
+
+                plt.xlim(x_min - x_margin, x_max + x_margin)
+                plt.ylim(y_min - y_margin, y_max + y_margin)
+
+
+                plt.title(f"Zoom on Element {zoom_eid}")
+                plt.xlabel("x")
+                plt.ylabel("y")
+                plt.grid(True)
+                plt.legend()
+                plt.tight_layout()
+                plt.savefig(f"zoom_element_{zoom_eid}.png", dpi=300)
+                plt.show()  # Uncomment for interactive session
+            else:
+                print(f"Element {zoom_eid} not found in intersection data.") """
+
+        ##################### End of Nurbs Fitting ########################
+
+        ################### AW 22.5: Start of Unfitted Curvature Smoothing ###################
+        # flag to control whether curvature smoothing is performed
+        if do_curvature_smoothing:
+            from scipy.signal import savgol_filter
+            # Step 1: Load intersection points and recover a ordered contour of points along the interface
+            # Reads the file intersection_points.txt as a table, using tab characters as separators.
+            data = pd.read_csv('intersection_points.txt', sep="\t")
+            # function that takes raw intersection points and orders them into continuous interface lines (contours)
+            contours = order_interface_contour(data)
+            # picks the first contour (in case there are several disconnected ones); assumes one interface currently
+            cut_points = contours[0]
+            # now a list of [x, y] coordinates tracing the interface, in order
+            # print(cut_points)
+
+            # Defines a helper function to map each (x, y) point in cut_points to its corresponding Element_ID from the intersection data
+            def match_cut_points_to_elements(cut_points, intersection_data, tol=1e-12):
+                """
+                Given ordered cut_points and the full intersection_points DataFrame,
+                returns a list of Element_IDs in the same order.
+                """
+                ordered_element_ids = []
+                used_elements = set()
+
+                for cut_x, cut_y in cut_points:
+                    # Search for matching point in intersection data
+                    match = intersection_data[
+                        (np.abs(intersection_data['X'] - cut_x) < tol) &
+                        (np.abs(intersection_data['Y'] - cut_y) < tol)
+                    ]
+
+                    if not match.empty:
+                        # Pick the first matching element that's not yet used
+                        for _, row in match.iterrows():
+                            elem_id = int(row['Element_ID'])
+                            if elem_id not in used_elements:
+                                ordered_element_ids.append(elem_id)
+                                used_elements.add(elem_id)
+                                break  # Go to next cut point
+                    else:
+                        print(f"[WARNING] No match found for cut point ({cut_x}, {cut_y})")
+
+                return ordered_element_ids
+
+
+
+            # Step 3: Map cut points to ordered Element_IDs
+            ordered_elem_ids = match_cut_points_to_elements(cut_points, data)
+
+
+
+            def smooth_interface_curvature_and_gradient(model_part, ordered_elem_ids, curvature_var, gradient_var,
+                                                        window_size=5, polyorder=2, method='savgol'):
+                """
+                Smooths nodal curvature and distance gradient using Savitzky–Golay or moving average.
+                
+                Parameters:
+                    model_part       : Kratos ModelPart
+                    ordered_elem_ids : list of interface element IDs
+                    curvature_var    : Kratos Variable for curvature (scalar)
+                    gradient_var     : Kratos Variable for distance gradient (vector)
+                    window_size      : smoothing window size (odd int)
+                    polyorder        : used for Savitzky–Golay (ignored if method='average')
+                    method           : 'savgol' or 'average'
+                """
+
+                def moving_average(data, window_size):
+                    pad = window_size // 2
+                    padded = np.pad(data, pad_width=pad, mode='edge')
+                    return np.convolve(padded, np.ones(window_size) / window_size, mode='valid')
+
+                def apply_filter(data, window_size, polyorder):
+                    if len(data) < window_size:
+                        return data
+                    if method == 'savgol':
+                        return savgol_filter(data, window_length=window_size, polyorder=polyorder)
+                    else:
+                        return moving_average(data, window_size)
+
+                # Step 1: ordered unique nodes
+                ordered_nodes = []
+                visited_node_ids = set()
+                prev_nodes = None
+
+                for elem_id in ordered_elem_ids:
+                    elem = model_part.GetElement(elem_id)
+                    current_nodes = list(elem.GetGeometry())
+
+                    if prev_nodes:
+                        prev_ids = {n.Id for n in prev_nodes}
+                        shared = [n for n in current_nodes if n.Id in prev_ids]
+                        if shared:
+                            shared_id = shared[0].Id
+                            idx = next(i for i, n in enumerate(current_nodes) if n.Id == shared_id)
+                            current_nodes = current_nodes[idx:] + current_nodes[:idx]
+
+                    for node in current_nodes:
+                        if node.Id not in visited_node_ids:
+                            ordered_nodes.append(node)
+                            visited_node_ids.add(node.Id)
+
+                    prev_nodes = current_nodes
+
+                # --- CURVATURE ---
+                kappa_before = {node.Id: node.GetValue(curvature_var) for node in ordered_nodes}
+                kappa_vals = np.array(list(kappa_before.values()))
+                kappa_smoothed = apply_filter(kappa_vals, window_size, polyorder)
+                kappa_after = {}
+
+                for node, val in zip(ordered_nodes, kappa_smoothed):
+                    node.SetValue(curvature_var, val)
+                    kappa_after[node.Id] = val
+
+                with open("curvature_smoothing_log.csv", "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Element_ID", "Node_ID", "Curvature_Before", "Curvature_After"])
+                    for elem_id in ordered_elem_ids:
+                        elem = model_part.GetElement(elem_id)
+                        for node in elem.GetGeometry():
+                            nid = node.Id
+                            if nid in kappa_before:
+                                writer.writerow([elem_id, nid, kappa_before[nid], kappa_after[nid]])
+
+                # --- DISTANCE GRADIENT ---
+                grad_before = {node.Id: list(node.GetSolutionStepValue(gradient_var)) for node in ordered_nodes}
+
+                grad_components = [[], [], []]
+                for node in ordered_nodes:
+                    vec = grad_before[node.Id]
+                    for i in range(3):
+                        grad_components[i].append(vec[i])
+
+                grad_smoothed = [apply_filter(np.array(comp), window_size, polyorder) for comp in grad_components]
+
+                grad_after = {}
+                for i, node in enumerate(ordered_nodes):
+                    smoothed_vec = np.array([grad_smoothed[0][i], grad_smoothed[1][i], grad_smoothed[2][i]])
+                    node.SetSolutionStepValue(gradient_var, smoothed_vec)
+                    grad_after[node.Id] = smoothed_vec
+
+                with open("distance_gradient_smoothing_log.csv", "w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Element_ID", "Node_ID",
+                                    "GradX_Before", "GradY_Before", "GradZ_Before",
+                                    "GradX_After", "GradY_After", "GradZ_After"])
+                    for elem_id in ordered_elem_ids:
+                        elem = model_part.GetElement(elem_id)
+                        for node in elem.GetGeometry():
+                            nid = node.Id
+                            if nid in grad_before:
+                                g_b = grad_before[nid]
+                                g_a = grad_after[nid]
+                                writer.writerow([elem_id, nid, g_b[0], g_b[1], g_b[2], g_a[0], g_a[1], g_a[2]])
+
+
+
+            smooth_interface_curvature_and_gradient(
+                self.main_model_part,
+                ordered_elem_ids,
+                KratosCFD.CURVATURE,
+                KratosMultiphysics.DISTANCE_GRADIENT,
+                window_size=2,
+                polyorder=1,
+                method='avg'
+            )
+
+
+
+
+        ################### AW 22.5: End of Unfitted Curvature Smoothing ###################
+
+   
+
+        # AW 19.5: execute normal averaging only when explicitly set
+        if normal_evaluation_mode == 3:
+            # debug print, delete once it works
+            print("Normal averaging is executed because normal_evaluation_mode is set to 3.")
+            ####################### Normal averaging added ##########################
+            # AW 14.5: normal averaging added
+
+            # INTERSECTION LENGTH CALCULATION - CORRECT VERSION
+            timestamp = self.main_model_part.ProcessInfo[KratosMultiphysics.TIME]
+            points_filename = f"intersection_points_{timestamp:.6f}.txt"
+            combined_filename = f"intersection_data_{timestamp:.6f}.txt"
+            averaged_normals_filename = f"averaged_normals_{timestamp:.6f}.txt"
+
+            # Step 1: Clear and collect intersection points
+            KratosDroplet.IntersectionPointsUtility.ClearIntersectionPoints()
+            for element in self.main_model_part.Elements:
+                KratosDroplet.IntersectionPointsUtility.CollectElementIntersectionPoints(element)
+
+            # Step 2: Save intersection points to file
+            #KratosDroplet.IntersectionPointsUtility.SaveIntersectionPointsToFile(points_filename)
+            # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, f"Saved intersection points to {points_filename}")
+
+            # Step 3: Calculate and store element intersection lengths
+            num_elements = KratosDroplet.CalculateAndStoreElementIntersectionLengths(self.main_model_part)
+            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
+            #                                    f"Calculated and stored intersection lengths for {num_elements} elements")
+
+            # Step 4: Calculate interface averages
+            KratosDroplet.InterfaceAveragesUtility.ClearInterfaceAverages()
+            KratosDroplet.InterfaceAveragesUtility.ComputeModelPartInterfaceAverages(self.main_model_part)
+
+            # Step 5: Collect intersection data with normals
+            num_elements = KratosDroplet.CollectIntersectionDataWithNormal(self.main_model_part)
+            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
+            #                                    f"Collected {num_elements} elements with intersection data and normals")
+
+            # Step 6: Save the collected data to file
+            #KratosDroplet.SaveIntersectionDataWithNormalToFile(combined_filename)
+            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
+            #                                    f"Saved intersection data with normals to {combined_filename}")
+
+            # Step 7: Set cut normals on elements
+            num_elements_with_normals = KratosDroplet.SetElementCutNormals(self.main_model_part)
+            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__,
+            #                                f"Set cut normals for {num_elements_with_normals} elements")
+            
+            # Step 8: Compute averaged normals with 1 neighbor level
+            num_elements_averaged = KratosDroplet.ComputeAndStoreAveragedNormals(
+                self.main_model_part, 2, "ELEMENT_CUT_NORMAL_AVERAGED")
+            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__,
+            #    f"Computed averaged normals for {num_elements_averaged} elements")
+        
+            # Step 9: Save the averaged normals to file with timestamped filename
+            #KratosDroplet.SaveAveragedNormalsToFile(self.main_model_part, averaged_normals_filename)
+            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__,
+            #    f"Saved averaged normals to {averaged_normals_filename}")
+            ###############################
+            # Step 4: Read the intersection lengths from elements and save to file
+            # Create a map to pass to SaveIntersectionLengthsToFile
+            intersection_lengths = {}
+            for element in self.main_model_part.Elements:
+                length = KratosDroplet.GetElementIntersectionLength(element)
+                if length > 0.0:  # Only save elements that have a valid intersection length
+                    intersection_lengths[element.Id] = length
+        
+            # # Save to file
+            #KratosDroplet.SaveIntersectionLengthsToFile(intersection_lengths, lengths_filename)
+            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
+            #                                    f"Saved {len(intersection_lengths)} intersection lengths to {lengths_filename}")
+            
+
+            # # Save element average normals to file
+            #normals_filename = f"element_normals_{timestamp:.6f}.txt"
+            #KratosDroplet.SaveElementAverageNormalsToFile(self.main_model_part, normals_filename)
+            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
+            #                                    f"Saved element average normals to {normals_filename}")
+            
+            # # Clear any existing intersection points from previous steps
+            # KratosDroplet.IntersectionPointsUtility.ClearIntersectionPoints()
+        
+            # # Collect intersection points from all elements
+            # for element in self.main_model_part.Elements:
+            #     KratosDroplet.IntersectionPointsUtility.CollectElementIntersectionPoints(element)
+            
+            # # # Run diagnostic to check how many elements are split by the level-set
+            # # KratosDroplet.IntersectionPointsUtility.DiagnosticOutput(self.main_model_part)
+        
+            # # Get all intersection points
+            # points = KratosDroplet.IntersectionPointsUtility.GetIntersectionPoints()
+            # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, f"Collected {len(points)} intersection points.")
+        
+            # # Save intersection points to file
+            # KratosDroplet.IntersectionPointsUtility.SaveIntersectionPointsToFile("intersection_points.txt")
+            # AW 14.5: end of the additional normal averaging
+            ####################### End of normal averaging #########################
+
+        
+
+        
+        
+        # AW 27.5: added this boolean to allow using only penalty term
+        normal_penalty = True
+        if normal_penalty:
+             # debug print, delete once it works
+            print("2nd Part of Normal averaging is executed because normal_evaluation_mode is set to 3.")
+            ####################### second part of normal averaging #######################
+            # AW 14.5: additional normal averaging
+            # for node in self.main_model_part.Nodes:
+            #     gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+            #     gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+            #     gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
+            #     g = (gx**2+gy**2+gz**2)**0.5
+            #     gx /= g
+            #     gy /= g
+            #     gz /= g
+            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
+            #     if node.Y == 0.0:
+            #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,-0.17365)
+            #         if node.X < 0.015:
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, -0.9848)
+            #         elif node.X > 0.015:
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.9848)
+            contact_angle = 0
+            for node in self.main_model_part.Nodes:
+                if node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0) != 0.0:
+                    contact_angle = node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0)
+
+            # AW 22.5: updated to consider equilibrium contact angle (100 in this case) here
+            diff = abs(contact_angle - 100)
+            if diff < 1:
+                beta = 1
+            elif diff > 9:
+                beta = 0
+            else:
+                beta = 0.5*(1+math.cos(3.1416*(diff-1.0)/8))
+            print("beta=",beta)
+
+            for node in self.main_model_part.Nodes:
+                gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+                gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+                gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
+                g = (gx**2+gy**2+gz**2)**0.5
+                gx /= g
+                gy /= g
+                gz /= g
+                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
+                if node.Y == 0.0:
+                    if beta > 0.0:
+                        gy = math.cos(contact_angle*3.1416/180) + beta*(math.cos(100.0*3.1416/180)- math.cos(contact_angle*3.1416/180))
+                        if node.X > 0.015:
+                            gx = math.sin(contact_angle*3.1416/180) + beta*(math.sin(100.0*3.1416/180)- math.sin(contact_angle*3.1416/180))
+                        elif node.X < 0.015:
+                            gx = -(math.sin(contact_angle*3.1416/180) + beta*(math.sin(100.0*3.1416/180)- math.sin(contact_angle*3.1416/180)))
+
+                        g = (gx**2+gy**2+gz**2)**0.5
+
+                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx/g)
+                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy/g)
+                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz/g) 
+
+
+                # if node.Y == 0.0:
+                #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0.50754)
+                #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,0.0)
+                #     if node.X < 0.015:
+                #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,-0.86163)
+                #     elif node.X > 0.015:
+                #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.86163)
+
+            # nx1=-1
+            # nx2=1
+            # ny1=ny2=0
+            # for node in self.main_model_part.Nodes:
+            #     nx=ny=0
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
+            #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
+            #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
+            #         if -0.001<diss <0.001 and 0.5 < (nx**2 + ny**2)**0.5:
+            #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+            #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+            #             if node.X < 0.015:
+            #                 nx1 = nx
+            #                 ny1 = ny
+            #                 if node.Is(KratosMultiphysics.BOUNDARY):
+            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
+            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
+            #                 else:
+            #                     nx1 = (3*nx1-gx)/2
+            #                     ny1 = (3*ny1-gy)/2
+            #             elif node.X > 0.015:
+            #                 nx2 = nx
+            #                 ny2 = ny
+            #                 if node.Is(KratosMultiphysics.BOUNDARY):
+            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
+            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
+            #                 else:
+            #                     nx2 = (3*nx2-gx)/2
+            #                     ny2 = (3*ny2-gy)/2
+
+
+            
+            # for node in self.main_model_part.Nodes:
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         if node.Y == 0.0:
+            #             if node.X < 0.015:
+            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx1)
+            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny1)
+            #             elif node.X > 0.015:
+            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx2)
+            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny2)
+            #################################################################################################
+
+
+            # for node in self.main_model_part.Nodes:
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+            #         gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+            #         if gx > 0.0:
+            #             nx = 0.9848
+            #         elif gx < 0.0:
+            #             nx = -0.9848
+            #         if gy > 0.0:
+            #             ny = 0.1736
+            #         elif gy < 0.0:
+            #             ny = -0.1736
+            #         if gx != 0.0 or gy != 0.0:
+            #             g = (gx**2+gy**2)**(0.5)
+            #             gx = nx * g
+            #             gy = ny *g
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+
+            # nx1=-1
+            # nx2=1
+            # ny1=ny2=0
+            # for node in self.main_model_part.Nodes:
+            #     nx=ny=0
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
+            #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
+            #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
+            #         if -0.001<diss <0.001 and 0.5<=(nx**2 + ny**2)**0.5:
+            #             if node.X < 0.015:
+            #                 nx1 = nx
+            #                 ny1 = ny
+            #             elif node.X > 0.015:
+            #                 nx2 = nx
+            #                 ny2 = ny
+
+            # for node in self.main_model_part.Nodes:
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         if node.Y == 0.0:
+            #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+            #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+            #             g = (gx**2+gy**2)**(0.5)
+            #             diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
+            #             if node.X < 0.015 and -0.001 < diss < 0.001:
+            #                 gx = nx1 * g
+            #                 gy = ny1 *g
+            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx1)
+            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny1)
+            #             elif node.X > 0.015 and -0.001 < diss < 0.001:
+            #                 gx = nx2 * g
+            #                 gy = ny2 *g
+            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx2)
+            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny2)
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+            # AW 14.5: end of additional normal averaging
+            ####################### end of second part of normal averaging ###################
+
+        # curvature is calculated using nodal distance gradient
+        self._GetDistanceCurvatureProcess().Execute()
+
+
+        
         ##########
         # Contact angle calculation
         # self._GetContactAngleEvaluatorProcess().Execute()
@@ -1450,13 +1698,16 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # print("Contact Angle Evaluator: Finished")
         ##########
 
-        # it is needed to store level-set consistent nodal PRESSURE_GRADIENT for stabilization purpose
+     # it is needed to store level-set consistent nodal PRESSURE_GRADIENT for stabilization purpose
         self._GetConsistentNodalPressureGradientProcess().Execute()
 
         # TODO: Performing mass conservation check and correction process
 
         # Perform distance correction to prevent ill-conditioned cuts
         self._GetDistanceModificationProcess().ExecuteInitializeSolutionStep()
+          
+
+   
 
         # Update the DENSITY and DYNAMIC_VISCOSITY values according to the new level-set
         self._SetNodalProperties()
