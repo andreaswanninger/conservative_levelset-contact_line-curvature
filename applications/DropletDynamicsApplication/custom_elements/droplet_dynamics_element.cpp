@@ -111,7 +111,8 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
         data.Initialize(*this, rCurrentProcessInfo);
 
         const double zeta = 5.0e-1;//1.0;//0.7;//
-        const double surface_tension_coefficient = 0.072;//0.0;
+        // AW 30.5
+        const double surface_tension_coefficient = 0.04;//0.0;
         
         const double theta_advancing = 100.0 * PI / 180.0;//180.0*PI/180.0;//149.0*PI/180.0;//129.78*PI/
         const double theta_receding = 100.0 * PI / 180.0;//0.0*PI/180.0;//115.0*PI/180.0;//129.78*PI/
@@ -2836,6 +2837,12 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             // AW 18.3: this projects the velocity of the gauss point onto the tangential (to the wall) direction
             const double contact_velocity_gp = inner_prod(wall_tangent,velocity_gp);
 
+            // AW 28.5: debug print of wall tangent, velocity at GP, and contact velocity; commented for now, outcomment if needed
+            /* std::cout << "Wall Tangent: (" << wall_tangent[0] << ", " << wall_tangent[1] << ", " << wall_tangent[2] << ")"
+                    << " | Velocity_GP: (" << velocity_gp[0] << ", " << velocity_gp[1] << ", " << velocity_gp[2] << ")"
+                    << " | Contact Velocity: " << contact_velocity_gp << std::endl; */
+
+
             // AW 18.3: this part currently outcommented; effectively needed to check for applying hydrodynamic theory or not
             //const double reynolds_number = effective_density*std::abs(contact_velocity_gp)*element_size/effective_viscosity;
             //////////
@@ -2933,7 +2940,16 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             contact_vector_microS = std::cos(contact_angle_micro_gp)*wall_tangent;
             
             // AW 12.5: added this part to be in accordance with Alirezas latest implementation
-            double h_coeff = 0.1171875;
+
+            // AW 28.5: debug print of element size; outcomment if needed
+            /* KRATOS_INFO("DropletDynamicsElement::SurfaceTension")
+            << "Element ID: " << this->Id()
+            << " | Projected Element Size: " << element_size << std::endl; */
+
+            // AW 28.5: automatically scaling the coeff based on element size (best practice: 500)
+            double h_coeff = 100 * element_size;
+            // old coeff
+            // double h_coeff = 0.1171875;
             if (contact_angle_micro_gp<=0.0 || contact_angle_micro_gp>=PI){
                 h_coeff = 0.0;
             }
@@ -3040,7 +3056,8 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
         for (unsigned int i=0; i < NumNodes; ++i){
 
             #pragma omp critical
-            {
+            {   
+                // AW-C 27.5: FastGetSolutionStepValue function accesses (writes) nodal solution step data
                 // AW 29.4: updated this code block to be in accordance with Alirezas latest implementation
                 (*p_geom)[i].FastGetSolutionStepValue(CONTACT_VELOCITY) = contact_velocity;
                 (*p_geom)[i].FastGetSolutionStepValue(NORMAL_VECTOR) = normal_avg;

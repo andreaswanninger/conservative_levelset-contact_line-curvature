@@ -49,6 +49,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # AW 21.4: quasistatic contact angle settings added
         # AW 5.5: smoothing coefficient increased to 500
         # AW 19.5: fitting settings added
+        # AW 28.5: added ref point of initial center of droplet on solid surface to fitting settings (for correctly computing normal orientation)
         default_settings = KratosMultiphysics.Parameters("""
         {
             "solver_type": "two_fluids",
@@ -140,7 +141,9 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             "fitting_type": "nurbs",             
             "use_partial_fitting": false,          
             "fitting_element_ids": [49, 50, 51, 149, 151, 152, 249, 349], 
-            "normal_evaluation_mode": 1           
+            "normal_evaluation_mode": 1,
+            "reference_point_x": 0.015,
+            "reference_point_y": 0                                                        
             }                                                                                                                                            
         }""")
 
@@ -273,7 +276,9 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.FittingElementIds, fitting_element_ids)
         normal_evaluation_mode = fitting_settings["normal_evaluation_mode"].GetInt()
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.NormalEvaluationMode, normal_evaluation_mode)
-
+        # AW 28.5: Added reference point for normal orientation
+        self.reference_point_x = fitting_settings["reference_point_x"].GetDouble()
+        self.reference_point_y = fitting_settings["reference_point_y"].GetDouble()
 
 
 
@@ -584,6 +589,198 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         """ if ( self.settings["convection_diffusion_settings"]["Perform_conservative_law"].GetBool() == True ):
             self._Curvature_Correction() """
         
+
+        # AW 27.5: added this boolean to allow using only penalty term
+        normal_penalty = False
+        if normal_penalty:
+             # debug print, delete once it works
+            print("2nd Part of Normal averaging is executed because normal_evaluation_mode is set to 3.")
+            ####################### second part of normal averaging #######################
+            # AW 14.5: additional normal averaging
+            # for node in self.main_model_part.Nodes:
+            #     gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+            #     gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+            #     gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
+            #     g = (gx**2+gy**2+gz**2)**0.5
+            #     gx /= g
+            #     gy /= g
+            #     gz /= g
+            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
+            #     if node.Y == 0.0:
+            #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,-0.17365)
+            #         if node.X < 0.015:
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, -0.9848)
+            #         elif node.X > 0.015:
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.9848)
+            contact_angle = 0
+            for node in self.main_model_part.Nodes:
+                if node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0) != 0.0:
+                    contact_angle = node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0)
+
+            # AW 22.5: updated to consider equilibrium contact angle (100 in this case) here
+            # AW 30.5: updated to use 80 deg
+            diff = abs(contact_angle - 80)
+            if diff < 1:
+                beta = 1
+            elif diff > 9:
+                beta = 0
+            else:
+                beta = 0.5*(1+math.cos(3.1416*(diff-1.0)/8))
+            print("beta=",beta)
+
+            for node in self.main_model_part.Nodes:
+                gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+                gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+                gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
+                g = (gx**2+gy**2+gz**2)**0.5
+                gx /= g
+                gy /= g
+                gz /= g
+                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
+                if node.Y == 0.0:
+                    if beta > 0.0:
+                        # AW 39.5: adapted to 80 deg
+                        gy = math.cos(contact_angle*3.1416/180) + beta*(math.cos(80.0*3.1416/180)- math.cos(contact_angle*3.1416/180))
+                        # AW 30.5: adapted to current geometry
+                        if node.X > 0.005:
+                            gx = math.sin(contact_angle*3.1416/180) + beta*(math.sin(80.0*3.1416/180)- math.sin(contact_angle*3.1416/180))
+                        elif node.X < 0.005:
+                            gx = -(math.sin(contact_angle*3.1416/180) + beta*(math.sin(80.0*3.1416/180)- math.sin(contact_angle*3.1416/180)))
+
+                        g = (gx**2+gy**2+gz**2)**0.5
+
+                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx/g)
+                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy/g)
+                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz/g) 
+
+
+                # if node.Y == 0.0:
+                #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0.50754)
+                #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,0.0)
+                #     if node.X < 0.015:
+                #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,-0.86163)
+                #     elif node.X > 0.015:
+                #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.86163)
+
+            # nx1=-1
+            # nx2=1
+            # ny1=ny2=0
+            # for node in self.main_model_part.Nodes:
+            #     nx=ny=0
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
+            #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
+            #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
+            #         if -0.001<diss <0.001 and 0.5 < (nx**2 + ny**2)**0.5:
+            #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+            #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+            #             if node.X < 0.015:
+            #                 nx1 = nx
+            #                 ny1 = ny
+            #                 if node.Is(KratosMultiphysics.BOUNDARY):
+            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
+            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
+            #                 else:
+            #                     nx1 = (3*nx1-gx)/2
+            #                     ny1 = (3*ny1-gy)/2
+            #             elif node.X > 0.015:
+            #                 nx2 = nx
+            #                 ny2 = ny
+            #                 if node.Is(KratosMultiphysics.BOUNDARY):
+            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
+            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
+            #                 else:
+            #                     nx2 = (3*nx2-gx)/2
+            #                     ny2 = (3*ny2-gy)/2
+
+
+            
+            # for node in self.main_model_part.Nodes:
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         if node.Y == 0.0:
+            #             if node.X < 0.015:
+            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx1)
+            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny1)
+            #             elif node.X > 0.015:
+            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx2)
+            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny2)
+            #################################################################################################
+
+
+            # for node in self.main_model_part.Nodes:
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+            #         gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+            #         if gx > 0.0:
+            #             nx = 0.9848
+            #         elif gx < 0.0:
+            #             nx = -0.9848
+            #         if gy > 0.0:
+            #             ny = 0.1736
+            #         elif gy < 0.0:
+            #             ny = -0.1736
+            #         if gx != 0.0 or gy != 0.0:
+            #             g = (gx**2+gy**2)**(0.5)
+            #             gx = nx * g
+            #             gy = ny *g
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+
+            # nx1=-1
+            # nx2=1
+            # ny1=ny2=0
+            # for node in self.main_model_part.Nodes:
+            #     nx=ny=0
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
+            #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
+            #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
+            #         if -0.001<diss <0.001 and 0.5<=(nx**2 + ny**2)**0.5:
+            #             if node.X < 0.015:
+            #                 nx1 = nx
+            #                 ny1 = ny
+            #             elif node.X > 0.015:
+            #                 nx2 = nx
+            #                 ny2 = ny
+
+            # for node in self.main_model_part.Nodes:
+            #     if node.Is(KratosMultiphysics.BOUNDARY):
+            #         if node.Y == 0.0:
+            #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+            #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+            #             g = (gx**2+gy**2)**(0.5)
+            #             diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
+            #             if node.X < 0.015 and -0.001 < diss < 0.001:
+            #                 gx = nx1 * g
+            #                 gy = ny1 *g
+            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx1)
+            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny1)
+            #             elif node.X > 0.015 and -0.001 < diss < 0.001:
+            #                 gx = nx2 * g
+            #                 gy = ny2 *g
+            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx2)
+            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny2)
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+            # AW 14.5: end of additional normal averaging
+            ####################### end of second part of normal averaging ###################
+        # curvature is calculated using nodal distance gradient
+        self._GetDistanceCurvatureProcess().Execute()
+
+        ##########
+        # Contact angle calculation
+        # self._GetContactAngleEvaluatorProcess().Execute()
+        # Store current level-set to check for wetting/dewetting used in contact_angle_evaluator
+        for node in self.main_model_part.Nodes:
+            old_distance = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
+            node.SetValue(KratosDroplet.DISTANCE_AUX, old_distance)
+        # print("Contact Angle Evaluator: Finished")
+        ##########
+        
          # it is needed to store level-set consistent nodal PRESSURE_GRADIENT for stabilization purpose
         self._GetConsistentNodalPressureGradientProcess().Execute()
 
@@ -593,6 +790,8 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self._GetDistanceModificationProcess().ExecuteInitializeSolutionStep()
 
 
+        # Update the DENSITY and DYNAMIC_VISCOSITY values according to the new level-set
+        self._SetNodalProperties()
 
         # AW 15.5: everything related to inters points, fitting, normal averaging AFTER the distance modification process as of now!!!
         # AW 19.5: Added user-defined fitting settings
@@ -696,6 +895,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             degree = 2  # cubic NURBS
             # AW-C 26.4: sets the number of control points for the NURBS curve (this controls the flexibility of the fit)
             # AW-I 26.4: we could use some optimization to check what number of control points gives best fit (could be repeated e.g. every 50 time steps, similar to whats done in parallel redistancing)
+            # AW 2.6: updated to use less CP
             ctrlpts_size=27# len(data)//2
             # try:
             # AW-C 26.4: Attempts to do an exact interpolating NURBS fit (with fallback on error)  
@@ -1016,11 +1216,20 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                         # Computes the normal vector as perpendicular to the tangent
                         # computes the Euclidean norm (or length) of the 2D vector
                         tnorm = np.hypot(x1, y1)
-                        # AW 27.5: change this to see if normal direction changes accordingly
-                        # nx, ny = (-y1 / tnorm, x1 / tnorm) if tnorm != 0 else (0.0, 0.0) 
-                        # old line
                         nx, ny = (y1 / tnorm, -x1 / tnorm) if tnorm != 0 else (0.0, 0.0) # outward unit normal
-                        normal = (nx, ny)  
+
+                        ########## AW 28.5: this part added to enforce normal vector to point outwards from domain
+                        normal_vec = np.array([nx, ny])
+                        # Reference vector from center to current Gauss point
+                        ref_vec = np.array([gp[0] - self.reference_point_x, gp[1] - self.reference_point_y])
+
+                        # uses the dot product to check if normal_vec is pointing toward the reference point (i.e., inward)
+                        if np.dot(ref_vec, normal_vec) < 0:
+                            # Flip normal if it's pointing inward
+                            normal_vec *= -1
+                        nx, ny = normal_vec
+                        normal = (nx, ny)
+                        ######## AW 28.5: end of this additional impl  
 
                         curvatures.append(curvature)
                         normals.append(normal)
@@ -1238,6 +1447,8 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         ################### AW 22.5: Start of Unfitted Curvature Smoothing ###################
         # flag to control whether curvature smoothing is performed
         if do_curvature_smoothing:
+            # AW 2.6: print statement added
+            KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Curvature smoothing is executed.")
             from scipy.signal import savgol_filter
             # Step 1: Load intersection points and recover a ordered contour of points along the interface
             # Reads the file intersection_points.txt as a table, using tab characters as separators.
@@ -1395,9 +1606,9 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 ordered_elem_ids,
                 KratosCFD.CURVATURE,
                 KratosMultiphysics.DISTANCE_GRADIENT,
-                window_size=2,
-                polyorder=1,
-                method='avg'
+                window_size=5,
+                polyorder=3,
+                method='savgol'
             )
 
 
@@ -1507,210 +1718,9 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
 
         
         
-        # AW 27.5: added this boolean to allow using only penalty term
-        normal_penalty = True
-        if normal_penalty:
-             # debug print, delete once it works
-            print("2nd Part of Normal averaging is executed because normal_evaluation_mode is set to 3.")
-            ####################### second part of normal averaging #######################
-            # AW 14.5: additional normal averaging
-            # for node in self.main_model_part.Nodes:
-            #     gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-            #     gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-            #     gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
-            #     g = (gx**2+gy**2+gz**2)**0.5
-            #     gx /= g
-            #     gy /= g
-            #     gz /= g
-            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
-            #     if node.Y == 0.0:
-            #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,-0.17365)
-            #         if node.X < 0.015:
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, -0.9848)
-            #         elif node.X > 0.015:
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.9848)
-            contact_angle = 0
-            for node in self.main_model_part.Nodes:
-                if node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0) != 0.0:
-                    contact_angle = node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0)
-
-            # AW 22.5: updated to consider equilibrium contact angle (100 in this case) here
-            diff = abs(contact_angle - 100)
-            if diff < 1:
-                beta = 1
-            elif diff > 9:
-                beta = 0
-            else:
-                beta = 0.5*(1+math.cos(3.1416*(diff-1.0)/8))
-            print("beta=",beta)
-
-            for node in self.main_model_part.Nodes:
-                gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-                gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-                gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
-                g = (gx**2+gy**2+gz**2)**0.5
-                gx /= g
-                gy /= g
-                gz /= g
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
-                if node.Y == 0.0:
-                    if beta > 0.0:
-                        gy = math.cos(contact_angle*3.1416/180) + beta*(math.cos(100.0*3.1416/180)- math.cos(contact_angle*3.1416/180))
-                        if node.X > 0.015:
-                            gx = math.sin(contact_angle*3.1416/180) + beta*(math.sin(100.0*3.1416/180)- math.sin(contact_angle*3.1416/180))
-                        elif node.X < 0.015:
-                            gx = -(math.sin(contact_angle*3.1416/180) + beta*(math.sin(100.0*3.1416/180)- math.sin(contact_angle*3.1416/180)))
-
-                        g = (gx**2+gy**2+gz**2)**0.5
-
-                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx/g)
-                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy/g)
-                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz/g) 
 
 
-                # if node.Y == 0.0:
-                #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0.50754)
-                #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,0.0)
-                #     if node.X < 0.015:
-                #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,-0.86163)
-                #     elif node.X > 0.015:
-                #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.86163)
-
-            # nx1=-1
-            # nx2=1
-            # ny1=ny2=0
-            # for node in self.main_model_part.Nodes:
-            #     nx=ny=0
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
-            #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
-            #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-            #         if -0.001<diss <0.001 and 0.5 < (nx**2 + ny**2)**0.5:
-            #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-            #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-            #             if node.X < 0.015:
-            #                 nx1 = nx
-            #                 ny1 = ny
-            #                 if node.Is(KratosMultiphysics.BOUNDARY):
-            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
-            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
-            #                 else:
-            #                     nx1 = (3*nx1-gx)/2
-            #                     ny1 = (3*ny1-gy)/2
-            #             elif node.X > 0.015:
-            #                 nx2 = nx
-            #                 ny2 = ny
-            #                 if node.Is(KratosMultiphysics.BOUNDARY):
-            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
-            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
-            #                 else:
-            #                     nx2 = (3*nx2-gx)/2
-            #                     ny2 = (3*ny2-gy)/2
-
-
-            
-            # for node in self.main_model_part.Nodes:
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         if node.Y == 0.0:
-            #             if node.X < 0.015:
-            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx1)
-            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny1)
-            #             elif node.X > 0.015:
-            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx2)
-            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny2)
-            #################################################################################################
-
-
-            # for node in self.main_model_part.Nodes:
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-            #         gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-            #         if gx > 0.0:
-            #             nx = 0.9848
-            #         elif gx < 0.0:
-            #             nx = -0.9848
-            #         if gy > 0.0:
-            #             ny = 0.1736
-            #         elif gy < 0.0:
-            #             ny = -0.1736
-            #         if gx != 0.0 or gy != 0.0:
-            #             g = (gx**2+gy**2)**(0.5)
-            #             gx = nx * g
-            #             gy = ny *g
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-
-            # nx1=-1
-            # nx2=1
-            # ny1=ny2=0
-            # for node in self.main_model_part.Nodes:
-            #     nx=ny=0
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
-            #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
-            #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-            #         if -0.001<diss <0.001 and 0.5<=(nx**2 + ny**2)**0.5:
-            #             if node.X < 0.015:
-            #                 nx1 = nx
-            #                 ny1 = ny
-            #             elif node.X > 0.015:
-            #                 nx2 = nx
-            #                 ny2 = ny
-
-            # for node in self.main_model_part.Nodes:
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         if node.Y == 0.0:
-            #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-            #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-            #             g = (gx**2+gy**2)**(0.5)
-            #             diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-            #             if node.X < 0.015 and -0.001 < diss < 0.001:
-            #                 gx = nx1 * g
-            #                 gy = ny1 *g
-            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx1)
-            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny1)
-            #             elif node.X > 0.015 and -0.001 < diss < 0.001:
-            #                 gx = nx2 * g
-            #                 gy = ny2 *g
-            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx2)
-            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny2)
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-            # AW 14.5: end of additional normal averaging
-            ####################### end of second part of normal averaging ###################
-
-        # curvature is calculated using nodal distance gradient
-        self._GetDistanceCurvatureProcess().Execute()
-
-
-        
-        ##########
-        # Contact angle calculation
-        # self._GetContactAngleEvaluatorProcess().Execute()
-        # Store current level-set to check for wetting/dewetting used in contact_angle_evaluator
-        for node in self.main_model_part.Nodes:
-            old_distance = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-            node.SetValue(KratosDroplet.DISTANCE_AUX, old_distance)
-        # print("Contact Angle Evaluator: Finished")
-        ##########
-
-     # it is needed to store level-set consistent nodal PRESSURE_GRADIENT for stabilization purpose
-        self._GetConsistentNodalPressureGradientProcess().Execute()
-
-        # TODO: Performing mass conservation check and correction process
-
-        # Perform distance correction to prevent ill-conditioned cuts
-        self._GetDistanceModificationProcess().ExecuteInitializeSolutionStep()
-          
-
-   
-
-        # Update the DENSITY and DYNAMIC_VISCOSITY values according to the new level-set
-        self._SetNodalProperties()
+      
 
         # Initialize the solver current step
         self._GetSolutionStrategy().InitializeSolutionStep()
@@ -1724,13 +1734,14 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self._GetSolutionStrategy().Predict()
 
 
+    # AW 29.5: outcommented this for leveque test
     def SolveSolutionStep(self):
         is_converged = self._GetSolutionStrategy().SolveSolutionStep()
         if not is_converged:
             msg  = "Droplet dynamics solver did not converge for step " + str(self.main_model_part.ProcessInfo[KratosMultiphysics.STEP]) + "\n"
             msg += "corresponding to time " + str(self.main_model_part.ProcessInfo[KratosMultiphysics.TIME]) + "\n"
             KratosMultiphysics.Logger.PrintWarning(self.__class__.__name__, msg)
-        return is_converged
+        return is_converged 
 
 
     def FinalizeSolutionStep(self):
