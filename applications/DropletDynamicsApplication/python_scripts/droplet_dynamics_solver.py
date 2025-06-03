@@ -50,6 +50,8 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # AW 5.5: smoothing coefficient increased to 500
         # AW 19.5: fitting settings added
         # AW 28.5: added ref point of initial center of droplet on solid surface to fitting settings (for correctly computing normal orientation)
+        # AW 2.6: added settings for curvature smoothing + normal penalty, x_threshold for mixed wettability, normal penalty
+        # AW 3.6: added parallel redistancing settings 
         default_settings = KratosMultiphysics.Parameters("""
         {
             "solver_type": "two_fluids",
@@ -111,6 +113,9 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             },                                               
             "distance_reinitialization": "variational",
             "parallel_redistance_max_layers" : 25,
+            "max_distance" : 1.0,
+            "calculate_exact_distances_to_plane" : true,
+            "preserve_interface" : false,    
             "distance_smoothing": false,
             "distance_smoothing_coefficient": 250.0,
             "distance_modification_settings": {
@@ -125,7 +130,8 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 "QuasiStatic_ContactAngle" : true,                                        
                 "Theta_equilibrium_hydrophilic" : 50,
                 "Theta_equilibrium_hydrophobic" : 130,                                     
-                "Penalty_coefficient" : 100
+                "Penalty_coefficient" : 100,
+                "X_threshold" : 0.005                                                                                     
             },
             "convection_diffusion_settings": {
                 "Perform_conservative_law": false,
@@ -144,7 +150,16 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             "normal_evaluation_mode": 1,
             "reference_point_x": 0.015,
             "reference_point_y": 0                                                        
-            }                                                                                                                                            
+            },
+            "curvature_normal_smoothing_settings": {
+            "do_smoothing": false,             
+            "method": "savgol",          
+            "window_size": 3, 
+            "polynomial_order": 2                                                     
+            },
+            "normal_penalty_settings": {
+            "do_normal_penalty":false                                                   
+            }                                                                                                                                              
         }""")
 
         default_settings.AddMissingParameters(super(DropletDynamicsSolver, cls).GetDefaultParameters())
@@ -261,10 +276,14 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         Theta_equilibrium_hydrophilic = qscl_settings["Theta_equilibrium_hydrophilic"].GetDouble()
         Theta_equilibrium_hydrophobic = qscl_settings["Theta_equilibrium_hydrophobic"].GetDouble()
         Penalty_coefficient = qscl_settings["Penalty_coefficient"].GetDouble()
+        # AW 2.6: added user-defined setting for x-threshold in mixed wettability
+        X_threshold = qscl_settings["X_threshold"].GetDouble()
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.quasi_static_contact_angle, QuasiStatic_ContactAngle)
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.theta_equilibrium_hydrophilic, Theta_equilibrium_hydrophilic)
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.theta_equilibrium_hydrophobic, Theta_equilibrium_hydrophobic)
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.penalty_coefficient, Penalty_coefficient)
+        # AW 2.6: added user-defined setting for x-threshold in mixed wettability
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.X_threshold, X_threshold)
 
         # AW 19.5: Added user-defined fitting settings
         fitting_settings = self.settings["fitting_settings"]
@@ -280,8 +299,18 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self.reference_point_x = fitting_settings["reference_point_x"].GetDouble()
         self.reference_point_y = fitting_settings["reference_point_y"].GetDouble()
 
+        # AW 2.6: Added user-defined settings
+        curvature_normal_smoothing_settings = self.settings["curvature_normal_smoothing_settings"]
+        self.do_curvature_normal_smoothing = curvature_normal_smoothing_settings["do_smoothing"].GetBool()
+        self.curvature_normal_smoothing_method = curvature_normal_smoothing_settings["method"].GetString()
+        self.curvature_normal_smoothing_window_size = curvature_normal_smoothing_settings["window_size"].GetInt()
+        self.curvature_normal_smoothing_poly_order = curvature_normal_smoothing_settings["polynomial_order"].GetInt()
 
-
+        # AW 2.6: added normal penalty setting
+        normal_penalty_settings = self.settings["normal_penalty_settings"]
+        self.do_normal_penalty = normal_penalty_settings["do_normal_penalty"].GetBool()
+        # AW 3.6: delete once works
+        print(" do_normal_penalty read from settings:", self.do_normal_penalty)
 
     def AddDofs(self):
         dofs_and_reactions_to_add = []
@@ -590,11 +619,10 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             self._Curvature_Correction() """
         
 
-        # AW 27.5: added this boolean to allow using only penalty term
-        normal_penalty = False
-        if normal_penalty:
+        # AW 2.6: user defined boolean to decide on normal penalty usage
+        if self.do_normal_penalty:
              # debug print, delete once it works
-            print("2nd Part of Normal averaging is executed because normal_evaluation_mode is set to 3.")
+            print("Normal Penalty term is executed.")
             ####################### second part of normal averaging #######################
             # AW 14.5: additional normal averaging
             # for node in self.main_model_part.Nodes:
@@ -619,43 +647,85 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 if node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0) != 0.0:
                     contact_angle = node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO,0)
 
+            # AW 2.6: retrieve hydrophilic, hydrophobic contact angle and X_threshold
+            theta_equilibrium_hydrophilic = self.main_model_part.ProcessInfo[KratosDroplet.theta_equilibrium_hydrophilic]
+            theta_equilibrium_hydrophobic = self.main_model_part.ProcessInfo[KratosDroplet.theta_equilibrium_hydrophobic]
+            X_threshold = self.main_model_part.ProcessInfo[KratosDroplet.X_threshold]
+
             # AW 22.5: updated to consider equilibrium contact angle (100 in this case) here
             # AW 30.5: updated to use 80 deg
-            diff = abs(contact_angle - 80)
-            if diff < 1:
-                beta = 1
-            elif diff > 9:
-                beta = 0
+            # AW 2.6: adapted to consider hydrophilic and hydrophobic contact angle
+            diff_hydrophilic = abs(contact_angle - theta_equilibrium_hydrophilic)
+            if diff_hydrophilic < 1:
+                beta_hydrophilic = 1
+            elif diff_hydrophilic > 9:
+                beta_hydrophilic = 0
             else:
-                beta = 0.5*(1+math.cos(3.1416*(diff-1.0)/8))
-            print("beta=",beta)
+                beta_hydrophilic = 0.5*(1+math.cos(3.1416*(diff_hydrophilic-1.0)/8))
+            print("beta_hydrophilic=",beta_hydrophilic)
+
+            diff_hydrophobic = abs(contact_angle - theta_equilibrium_hydrophobic)
+            if diff_hydrophobic < 1:
+                beta_hydrophobic = 1
+            elif diff_hydrophobic > 9:
+                beta_hydrophobic = 0
+            else:
+                beta_hydrophobic = 0.5*(1+math.cos(3.1416*(diff_hydrophobic-1.0)/8))
+            print("beta_hydrophobic=",beta_hydrophobic)
+            
 
             for node in self.main_model_part.Nodes:
-                gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-                gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-                gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
-                g = (gx**2+gy**2+gz**2)**0.5
-                gx /= g
-                gy /= g
-                gz /= g
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
-                if node.Y == 0.0:
-                    if beta > 0.0:
-                        # AW 39.5: adapted to 80 deg
-                        gy = math.cos(contact_angle*3.1416/180) + beta*(math.cos(80.0*3.1416/180)- math.cos(contact_angle*3.1416/180))
-                        # AW 30.5: adapted to current geometry
-                        if node.X > 0.005:
-                            gx = math.sin(contact_angle*3.1416/180) + beta*(math.sin(80.0*3.1416/180)- math.sin(contact_angle*3.1416/180))
-                        elif node.X < 0.005:
-                            gx = -(math.sin(contact_angle*3.1416/180) + beta*(math.sin(80.0*3.1416/180)- math.sin(contact_angle*3.1416/180)))
+                # AW 2.6. adapted to vary based on hydrophilic or hydrophobic regime
+                if node.X <= X_threshold:
+                    gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+                    gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+                    gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
+                    g = (gx**2+gy**2+gz**2)**0.5
+                    gx /= g
+                    gy /= g
+                    gz /= g
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
+                    if node.Y == 0.0:
+                        if beta_hydrophilic > 0.0:
+                            gy = math.cos(contact_angle*3.1416/180) + beta_hydrophilic*(math.cos(theta_equilibrium_hydrophilic*3.1416/180)- math.cos(contact_angle*3.1416/180))
+                            # AW 2.6: made this dependent on the reference point in x (droplet center)
+                            if node.X > self.reference_point_x:
+                                gx = math.sin(contact_angle*3.1416/180) + beta_hydrophilic*(math.sin(theta_equilibrium_hydrophilic*3.1416/180)- math.sin(contact_angle*3.1416/180))
+                            elif node.X < self.reference_point_x:
+                                gx = -(math.sin(contact_angle*3.1416/180) + beta_hydrophilic*(math.sin(theta_equilibrium_hydrophilic*3.1416/180)- math.sin(contact_angle*3.1416/180)))
 
-                        g = (gx**2+gy**2+gz**2)**0.5
+                            g = (gx**2+gy**2+gz**2)**0.5
 
-                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx/g)
-                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy/g)
-                        node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz/g) 
+                            node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx/g)
+                            node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy/g)
+                            node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz/g) 
+                else:
+                    gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
+                    gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
+                    gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
+                    g = (gx**2+gy**2+gz**2)**0.5
+                    gx /= g
+                    gy /= g
+                    gz /= g
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
+                    if node.Y == 0.0:
+                        if beta_hydrophobic > 0.0:
+                            gy = math.cos(contact_angle*3.1416/180) + beta_hydrophobic*(math.cos(theta_equilibrium_hydrophobic*3.1416/180)- math.cos(contact_angle*3.1416/180))
+                            # AW 2.6: made this dependent on the reference point in x (droplet center)
+                            if node.X > self.reference_point_x:
+                                gx = math.sin(contact_angle*3.1416/180) + beta_hydrophobic*(math.sin(theta_equilibrium_hydrophobic*3.1416/180)- math.sin(contact_angle*3.1416/180))
+                            elif node.X < self.reference_point_x:
+                                gx = -(math.sin(contact_angle*3.1416/180) + beta_hydrophobic*(math.sin(theta_equilibrium_hydrophobic*3.1416/180)- math.sin(contact_angle*3.1416/180)))
+
+                            g = (gx**2+gy**2+gz**2)**0.5
+
+                            node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx/g)
+                            node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy/g)
+                            node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz/g) 
 
 
                 # if node.Y == 0.0:
@@ -801,9 +871,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         normal_evaluation_mode = self.main_model_part.ProcessInfo[KratosDroplet.NormalEvaluationMode]
 
         # AW 19.5: Only run Intersection Points utility if fitting_type is explicitly set to "nurbs" (needed for nurbs fitting) or normal_evaluation_mode==3 (needed for normal averaging)
-        # AW 22.5: also add this boolean, as we need intersection points also for curvature smoothing
-        do_curvature_smoothing = False
-        if fitting_type == "nurbs" or normal_evaluation_mode == 2 or normal_evaluation_mode == 3 or do_curvature_smoothing:
+        if fitting_type == "nurbs" or normal_evaluation_mode == 2 or normal_evaluation_mode == 3 or self.do_curvature_normal_smoothing:
             # Debug print: delete once it works
             print(f"IntersectionPointsUtility is executed because fitting_type = '{fitting_type}' or normal_evaluation_mode = {normal_evaluation_mode}.")
   
@@ -1445,10 +1513,10 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         ##################### End of Nurbs Fitting ########################
 
         ################### AW 22.5: Start of Unfitted Curvature Smoothing ###################
-        # flag to control whether curvature smoothing is performed
-        if do_curvature_smoothing:
-            # AW 2.6: print statement added
-            KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Curvature smoothing is executed.")
+        
+        # user-defined flag to control whether curvature smoothing is performed
+        if self.do_curvature_normal_smoothing:
+           
             from scipy.signal import savgol_filter
             # Step 1: Load intersection points and recover a ordered contour of points along the interface
             # Reads the file intersection_points.txt as a table, using tab characters as separators.
@@ -1510,6 +1578,12 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                     polyorder        : used for Savitzky–Golay (ignored if method='average')
                     method           : 'savgol' or 'average'
                 """
+
+                # AW 2.6: print statement added
+                KratosMultiphysics.Logger.PrintInfo(
+                    "smooth_interface_curvature_and_gradient",
+                    f"Curvature smoothing is executed with method='{method}', window_size={window_size}, polyorder={polyorder}."
+                )
 
                 def moving_average(data, window_size):
                     pad = window_size // 2
@@ -1599,20 +1673,17 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                                 g_a = grad_after[nid]
                                 writer.writerow([elem_id, nid, g_b[0], g_b[1], g_b[2], g_a[0], g_a[1], g_a[2]])
 
-
+            # AW 2.6: updated to use user-defined variables from PP.json
 
             smooth_interface_curvature_and_gradient(
                 self.main_model_part,
                 ordered_elem_ids,
                 KratosCFD.CURVATURE,
                 KratosMultiphysics.DISTANCE_GRADIENT,
-                window_size=5,
-                polyorder=3,
-                method='savgol'
+                window_size=self.curvature_normal_smoothing_window_size,
+                polyorder=self.curvature_normal_smoothing_poly_order,
+                method=self.curvature_normal_smoothing_method
             )
-
-
-
 
         ################### AW 22.5: End of Unfitted Curvature Smoothing ###################
 
@@ -1734,7 +1805,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self._GetSolutionStrategy().Predict()
 
 
-    # AW 29.5: outcommented this for leveque test
+    # AW 2.6: outcommented this for leveque test
     def SolveSolutionStep(self):
         is_converged = self._GetSolutionStrategy().SolveSolutionStep()
         if not is_converged:
@@ -1756,11 +1827,19 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             self._GetDistanceGradientProcess().Execute()
 
         # Recompute the distance field according to the new level-set position
-        if self._reinitialization_type != "none":
+        # AW 3.6: adapted for redistancing
+
+        # AW 3.6: old code
+        """  if self._reinitialization_type != "none":
             step = self.main_model_part.ProcessInfo[KratosMultiphysics.STEP]
             if step == 2 or step%12==0:
                 self._GetDistanceReinitializationProcess().Execute()
-                KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Redistancing process is finished.")
+                KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Redistancing process is finished.") """
+        
+        # AW 3.6: new code
+        if self._reinitialization_type != "none" and self.main_model_part.ProcessInfo[KratosMultiphysics.STEP] % 50 == 0:
+            self._GetDistanceReinitializationProcess().Execute()
+            KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Redistancing process is finished.")
 
         
 
@@ -2184,13 +2263,38 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
 
         elif (self._reinitialization_type == "parallel"):
             #TODO: move all this to solver settings
+
+            # AW 3.6: old code, commented
+            
+            #layers = self.settings["parallel_redistance_max_layers"].GetInt()
+            #parallel_distance_settings = KratosMultiphysics.Parameters("""{
+            #    "max_levels" : 25,
+            #    "max_distance" : 1.0,
+            #    "calculate_exact_distances_to_plane" : true
+            #}""")
+            #parallel_distance_settings["max_levels"].SetInt(layers)
+
+
+            # AW 3.6: new code
             layers = self.settings["parallel_redistance_max_layers"].GetInt()
+            max_distance = self.settings["max_distance"].GetDouble()
+            calculate_exact_distance_to_plane = self.settings["calculate_exact_distances_to_plane"].GetBool()
+            preserve_interface = self.settings["preserve_interface"].GetBool()
             parallel_distance_settings = KratosMultiphysics.Parameters("""{
                 "max_levels" : 25,
                 "max_distance" : 1.0,
-                "calculate_exact_distances_to_plane" : true
+                "calculate_exact_distances_to_plane" : true,
+                "preserve_interface" : false
             }""")
             parallel_distance_settings["max_levels"].SetInt(layers)
+            parallel_distance_settings["max_distance"].SetDouble(max_distance)
+            parallel_distance_settings["calculate_exact_distances_to_plane"].SetBool(calculate_exact_distance_to_plane)
+            parallel_distance_settings["preserve_interface"].SetBool(preserve_interface)
+
+            # Print after setting values
+            print("DEBUG: Parallel Distance Settings that are active:")
+            print(parallel_distance_settings)
+
             if self.main_model_part.ProcessInfo[KratosMultiphysics.DOMAIN_SIZE] == 2:
                 distance_reinitialization_process = KratosMultiphysics.ParallelDistanceCalculationProcess2D(
                     self.main_model_part,

@@ -589,6 +589,8 @@ private:
         const double Theta_equilibrium_hydrophilic,
         const double Theta_equilibrium_hydrophobic,
         const double Penalty_coefficient,
+        // AW 2.6
+        const double x_threshold,
         // AW 19.5: added the fitting variables
         const std::string& Fitting_type,
         const int Normal_evaluation_mode
@@ -642,6 +644,8 @@ private:
         const double Theta_equilibrium_hydrophobic,
         const double Penalty_coefficient,
         const double current_time,
+        // AW 2.6
+        const double x_threshold,
         // AW 19.5: added the user-defined variables regarding fitting
         const std::string& Fitting_type,
         const bool Use_partial_fitting,

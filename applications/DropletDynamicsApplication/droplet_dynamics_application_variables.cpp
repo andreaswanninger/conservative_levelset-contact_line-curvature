@@ -74,6 +74,8 @@ namespace Kratos
     KRATOS_CREATE_VARIABLE(double, theta_equilibrium_hydrophilic)
     KRATOS_CREATE_VARIABLE(double, theta_equilibrium_hydrophobic)
     KRATOS_CREATE_VARIABLE(double, penalty_coefficient)
+    // AW 2.6
+    KRATOS_CREATE_VARIABLE(double, X_threshold)
 
     // AW 28.4: Fitted curvature and normal at the node 
     KRATOS_CREATE_VARIABLE(double, FITTED_CURVATURE)
@@ -86,10 +88,9 @@ namespace Kratos
     KRATOS_CREATE_3D_VARIABLE_WITH_COMPONENTS(NORMAL_FITTED_GAUSS2)
 
     // AW 19.5: Added variables regarding fitting choices
-    KRATOS_CREATE_VARIABLE(std::string, FittingType)                     // Python → C++ 
-    KRATOS_CREATE_VARIABLE(bool, UsePartialFitting)                      // Python → C++
-    KRATOS_CREATE_VARIABLE(Vector, FittingElementIds) // Python → C++
-    KRATOS_CREATE_VARIABLE(int, NormalEvaluationMode)                    // Python → C++
-
+    KRATOS_CREATE_VARIABLE(std::string, FittingType)                     
+    KRATOS_CREATE_VARIABLE(bool, UsePartialFitting)                      
+    KRATOS_CREATE_VARIABLE(Vector, FittingElementIds) 
+    KRATOS_CREATE_VARIABLE(int, NormalEvaluationMode)                   
 
 }

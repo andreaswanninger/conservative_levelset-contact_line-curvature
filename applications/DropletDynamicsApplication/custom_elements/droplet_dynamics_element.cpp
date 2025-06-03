@@ -82,6 +82,8 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
     const double Theta_equilibrium_hydrophobic = rCurrentProcessInfo[theta_equilibrium_hydrophobic];
     const double Penalty_coefficient = rCurrentProcessInfo[penalty_coefficient];
     const bool Quasi_static_contact_angle = rCurrentProcessInfo[quasi_static_contact_angle];
+    // AW 2.6: access X_threshold
+    const double x_threshold = rCurrentProcessInfo[X_threshold];
 
     // AW 19.5: added to access user-defined variables related to fitting
     const std::string& Fitting_type = rCurrentProcessInfo[FittingType];
@@ -390,6 +392,8 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
                         Theta_equilibrium_hydrophobic,
                         Penalty_coefficient,
                         current_time,
+                        // AW 2.6
+                        x_threshold,
                         // AW 19.5
                         Fitting_type,
                         Use_partial_fitting,
@@ -2490,6 +2494,8 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     const double Theta_equilibrium_hydrophilic,
     const double Theta_equilibrium_hydrophobic,
     const double Penalty_coefficient,
+    // AW 2.6
+    const double x_threshold,
     // AW 19.5
     const std::string& Fitting_type,
     const int Normal_evaluation_mode
@@ -2519,7 +2525,8 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     double node_x = (*p_geom)[0].X();  // Using the first node (index 0) for the check
     double contact_angle_equilibrium = 0.0;
 
-    if (node_x > 0.005) {
+    // AW 2.6
+    if (node_x > x_threshold) {
         contact_angle_equilibrium = Theta_equilibrium_hydrophobic * PI /180;
         // AW 24.4: print statement removed
 /*         KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
@@ -2947,7 +2954,7 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             << " | Projected Element Size: " << element_size << std::endl; */
 
             // AW 28.5: automatically scaling the coeff based on element size (best practice: 500)
-            double h_coeff = 100 * element_size;
+            double h_coeff = 500 * element_size;
             // old coeff
             // double h_coeff = 0.1171875;
             if (contact_angle_micro_gp<=0.0 || contact_angle_micro_gp>=PI){
@@ -3254,6 +3261,8 @@ void DropletDynamicsElement<TElementData>::AddSurfaceTensionContribution(
     const double Theta_equilibrium_hydrophobic,
     const double Penalty_coefficient,
     const double current_time,
+    // AW 2.6
+    const double x_threshold,
     // AW 19.5: added the user-defined variables regarding fitting
     const std::string& Fitting_type,
     const bool Use_partial_fitting,
@@ -3305,6 +3314,8 @@ void DropletDynamicsElement<TElementData>::AddSurfaceTensionContribution(
         Theta_equilibrium_hydrophilic,
         Theta_equilibrium_hydrophobic,
         Penalty_coefficient,
+        // AW 2.6
+        x_threshold,
         // AW 19.5: added the fitting variables
         Fitting_type,
         Normal_evaluation_mode

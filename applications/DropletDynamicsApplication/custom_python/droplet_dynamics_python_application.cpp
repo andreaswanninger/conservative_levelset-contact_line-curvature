@@ -97,6 +97,8 @@ PYBIND11_MODULE(KratosDropletDynamicsApplication,m)
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, theta_equilibrium_hydrophilic)
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, theta_equilibrium_hydrophobic)
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, penalty_coefficient)
+    // AW 2.6
+    KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, X_threshold)
 
     // AW 28.4:fitted curvature and normals
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m,  FITTED_CURVATURE)
@@ -113,8 +115,6 @@ PYBIND11_MODULE(KratosDropletDynamicsApplication,m)
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, UsePartialFitting)
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, FittingElementIds)
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, NormalEvaluationMode)
-
-    
 
 }
 
