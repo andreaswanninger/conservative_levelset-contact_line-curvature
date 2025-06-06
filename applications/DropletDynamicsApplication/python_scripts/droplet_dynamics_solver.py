@@ -623,8 +623,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         if self.do_normal_penalty:
              # debug print, delete once it works
             print("Normal Penalty term is executed.")
-            ####################### second part of normal averaging #######################
-            # AW 14.5: additional normal averaging
+           
             # for node in self.main_model_part.Nodes:
             #     gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
             #     gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
@@ -643,21 +642,28 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             #         elif node.X > 0.015:
             #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.9848)
             
-            # AW 4.6: adapted this additionally to retrieve contact angles on left and right separately
-            contact_angle = 0.0
+            contact_angle_hydrophilic = 0.0
+            contact_angle_hydrophobic = 0.0
+
+            X_threshold = self.main_model_part.ProcessInfo[KratosDroplet.X_threshold]
 
             for node in self.main_model_part.Nodes:
                 angle = node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO, 0)
+                # AW 6.6: adapted to consider mixed wettability configurations (as well as generally, left and right contact angles)
+                x = node.X
                 if angle != 0.0:
-                    contact_angle = angle
+                    if x < X_threshold:
+                        contact_angle_hydrophilic = angle
+                        # AW 6.6: remove print statements once it works
+                        print(f"Found contact angle on hydrophilic part of domain: {angle:.4f} at X = {x:.6f}")
+                    elif x > X_threshold:
+                        contact_angle_hydrophobic = angle
+                        # AW 6.6: remove print statements once it works
+                        print(f"Found contact angle on hydrophobic part of domain: {angle:.4f} at X = {x:.6f}")
 
             # AW 2.6: retrieve hydrophilic, hydrophobic contact angle and X_threshold
             theta_equilibrium_hydrophilic = self.main_model_part.ProcessInfo[KratosDroplet.theta_equilibrium_hydrophilic]
             theta_equilibrium_hydrophobic = self.main_model_part.ProcessInfo[KratosDroplet.theta_equilibrium_hydrophobic]
-            X_threshold = self.main_model_part.ProcessInfo[KratosDroplet.X_threshold]
-
-            # AW 22.5: updated to consider equilibrium contact angle (100 in this case) here
-            # AW 30.5: updated to use 80 deg
 
             # AW 4.6: adapted to allow using normal penalty also on vertical walls
 
@@ -668,23 +674,25 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             y_bottom_wall = 0.0
             tol = 1e-8  # floating point tolerance
 
-            # AW 2.6: adapted to consider hydrophilic and hydrophobic contact angle
-            diff_hydrophilic = abs(contact_angle - theta_equilibrium_hydrophilic)
+            # AW 6.6: adapted to consider hydrophilic and hydrophobic contact angle
+            diff_hydrophilic = abs(contact_angle_hydrophilic - theta_equilibrium_hydrophilic)
             if diff_hydrophilic < 1:
                 beta_hydrophilic = 1
             elif diff_hydrophilic > 9:
                 beta_hydrophilic = 0
             else:
-                beta_hydrophilic = 0.5*(1+math.cos(3.1416*(diff_hydrophilic-1.0)/8))
+                # AW 6.6: 3.1416 replaced by math.pi
+                beta_hydrophilic = 0.5*(1+math.cos(math.pi*(diff_hydrophilic-1.0)/8))
             print("beta_hydrophilic=",beta_hydrophilic)
-
-            diff_hydrophobic = abs(contact_angle - theta_equilibrium_hydrophobic)
+            
+            # AW 6.6: adapted to consider hydrophilic and hydrophobic contact angle
+            diff_hydrophobic = abs(contact_angle_hydrophobic - theta_equilibrium_hydrophobic)
             if diff_hydrophobic < 1:
                 beta_hydrophobic = 1
             elif diff_hydrophobic > 9:
                 beta_hydrophobic = 0
             else:
-                beta_hydrophobic = 0.5*(1+math.cos(3.1416*(diff_hydrophobic-1.0)/8))
+                beta_hydrophobic = 0.5*(1+math.cos(math.pi*(diff_hydrophobic-1.0)/8))
             print("beta_hydrophobic=",beta_hydrophobic)
             
             # AW 4.6: adapted to also work for vertical walls
@@ -693,6 +701,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
                 gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
                 gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
+                # Normalize distance gradients and set them again
                 g = (gx**2 + gy**2 + gz**2)**0.5
                 gx /= g
                 gy /= g
@@ -704,20 +713,20 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 # Apply contact angle logic on horizontal bottom wall (Y ≈ 0)
                 if is_horizontal_wall and abs(node.Y - y_bottom_wall) < tol:
                     if node.X <= X_threshold and beta_hydrophilic > 0.0:
-                        gy = math.cos(contact_angle * math.pi / 180) + beta_hydrophilic * (
-                            math.cos(theta_equilibrium_hydrophilic * math.pi / 180) - math.cos(contact_angle * math.pi / 180)
+                        gy = math.cos(contact_angle_hydrophilic * math.pi / 180) + beta_hydrophilic * (
+                            math.cos(theta_equilibrium_hydrophilic * math.pi / 180) - math.cos(contact_angle_hydrophilic * math.pi / 180)
                         )
-                        gx = math.sin(contact_angle * math.pi / 180) + beta_hydrophilic * (
-                            math.sin(theta_equilibrium_hydrophilic * math.pi / 180) - math.sin(contact_angle * math.pi / 180)
+                        gx = math.sin(contact_angle_hydrophilic * math.pi / 180) + beta_hydrophilic * (
+                            math.sin(theta_equilibrium_hydrophilic * math.pi / 180) - math.sin(contact_angle_hydrophilic * math.pi / 180)
                         )
                         if node.X < self.reference_point_x:
                             gx *= -1
                     elif node.X > X_threshold and beta_hydrophobic > 0.0:
-                        gy = math.cos(contact_angle * math.pi / 180) + beta_hydrophobic * (
-                            math.cos(theta_equilibrium_hydrophobic * math.pi / 180) - math.cos(contact_angle * math.pi / 180)
+                        gy = math.cos(contact_angle_hydrophobic * math.pi / 180) + beta_hydrophobic * (
+                            math.cos(theta_equilibrium_hydrophobic * math.pi / 180) - math.cos(contact_angle_hydrophobic * math.pi / 180)
                         )
-                        gx = math.sin(contact_angle * math.pi / 180) + beta_hydrophobic * (
-                            math.sin(theta_equilibrium_hydrophobic * math.pi / 180) - math.sin(contact_angle * math.pi / 180)
+                        gx = math.sin(contact_angle_hydrophobic * math.pi / 180) + beta_hydrophobic * (
+                            math.sin(theta_equilibrium_hydrophobic * math.pi / 180) - math.sin(contact_angle_hydrophobic * math.pi / 180)
                         )
                         if node.X < self.reference_point_x:
                             gx *= -1
@@ -726,39 +735,47 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 if not is_horizontal_wall:
                     # LEFT wall
                     if abs(node.X - x_left_wall) < tol:
-                        if node.Y <= X_threshold and beta_hydrophilic > 0.0:
-                            gx = -math.cos(contact_angle * math.pi / 180) - beta_hydrophilic * (
-                                math.cos(theta_equilibrium_hydrophilic * math.pi / 180) - math.cos(contact_angle * math.pi / 180)
+                        # AW 6.6: corrected this part
+                        if node.X <= X_threshold and beta_hydrophilic > 0.0:
+                            gy = math.cos(contact_angle_hydrophilic * math.pi / 180) + beta_hydrophilic * (
+                            math.cos(theta_equilibrium_hydrophilic * math.pi / 180) - math.cos(contact_angle_hydrophilic * math.pi / 180)
                             )
-                            gy = math.sin(contact_angle * math.pi / 180) + beta_hydrophilic * (
-                                math.sin(theta_equilibrium_hydrophilic * math.pi / 180) - math.sin(contact_angle * math.pi / 180)
-                            )
-                        elif node.Y > X_threshold and beta_hydrophobic > 0.0:
-                            gx = -math.cos(contact_angle * math.pi / 180) - beta_hydrophobic * (
-                                math.cos(theta_equilibrium_hydrophobic * math.pi / 180) - math.cos(contact_angle * math.pi / 180)
-                            )
-                            gy = math.sin(contact_angle * math.pi / 180) + beta_hydrophobic * (
-                                math.sin(theta_equilibrium_hydrophobic * math.pi / 180) - math.sin(contact_angle * math.pi / 180)
+                            gx = math.sin(contact_angle_hydrophilic * math.pi / 180) + beta_hydrophilic * (
+                                math.sin(theta_equilibrium_hydrophilic * math.pi / 180) - math.sin(contact_angle_hydrophilic * math.pi / 180)
                             )
                             if node.X < self.reference_point_x:
                                 gx *= -1
-                        # Clockwise rotation for left wall
+                         # AW 6.6: corrected this part
+                        elif node.X > X_threshold and beta_hydrophobic > 0.0:
+                            gy = math.cos(contact_angle_hydrophobic * math.pi / 180) + beta_hydrophobic * (
+                            math.cos(theta_equilibrium_hydrophobic * math.pi / 180) - math.cos(contact_angle_hydrophobic * math.pi / 180)
+                            )
+                            gx = math.sin(contact_angle_hydrophobic * math.pi / 180) + beta_hydrophobic * (
+                                math.sin(theta_equilibrium_hydrophobic * math.pi / 180) - math.sin(contact_angle_hydrophobic * math.pi / 180)
+                            )
+                            if node.X < self.reference_point_x:
+                                gx *= -1
+                        # Clockwise 90 deg rotation for left wall
                         gx, gy = gy, -gx
                     # RIGHT wall
                     elif abs(node.X - x_right_wall) < tol:
-                        if node.Y <= X_threshold and beta_hydrophilic > 0.0:
-                            gx = math.cos(contact_angle * math.pi / 180) + beta_hydrophilic * (
-                                math.cos(theta_equilibrium_hydrophilic * math.pi / 180) - math.cos(contact_angle * math.pi / 180)
+                         # AW 6.6: corrected this part
+                        if node.X <= X_threshold and beta_hydrophilic > 0.0:
+                            gy = math.cos(contact_angle_hydrophilic * math.pi / 180) + beta_hydrophilic * (
+                            math.cos(theta_equilibrium_hydrophilic * math.pi / 180) - math.cos(contact_angle_hydrophilic * math.pi / 180)
                             )
-                            gy = math.sin(contact_angle * math.pi / 180) + beta_hydrophilic * (
-                                math.sin(theta_equilibrium_hydrophilic * math.pi / 180) - math.sin(contact_angle * math.pi / 180)
+                            gx = math.sin(contact_angle_hydrophilic * math.pi / 180) + beta_hydrophilic * (
+                                math.sin(theta_equilibrium_hydrophilic * math.pi / 180) - math.sin(contact_angle_hydrophilic * math.pi / 180)
                             )
-                        elif node.Y > X_threshold and beta_hydrophobic > 0.0:
-                            gx = math.cos(contact_angle * math.pi / 180) + beta_hydrophobic * (
-                                math.cos(theta_equilibrium_hydrophobic * math.pi / 180) - math.cos(contact_angle * math.pi / 180)
+                            if node.X < self.reference_point_x:
+                                gx *= -1
+                         # AW 6.6: corrected this part
+                        elif node.X > X_threshold and beta_hydrophobic > 0.0:
+                            gy = math.cos(contact_angle_hydrophobic * math.pi / 180) + beta_hydrophobic * (
+                            math.cos(theta_equilibrium_hydrophobic * math.pi / 180) - math.cos(contact_angle_hydrophobic * math.pi / 180)
                             )
-                            gy = math.sin(contact_angle * math.pi / 180) + beta_hydrophobic * (
-                                math.sin(theta_equilibrium_hydrophobic * math.pi / 180) - math.sin(contact_angle * math.pi / 180)
+                            gx = math.sin(contact_angle_hydrophobic * math.pi / 180) + beta_hydrophobic * (
+                                math.sin(theta_equilibrium_hydrophobic * math.pi / 180) - math.sin(contact_angle_hydrophobic * math.pi / 180)
                             )
                             if node.X < self.reference_point_x:
                                 gx *= -1
@@ -883,6 +900,13 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
             # AW 14.5: end of additional normal averaging
             ####################### end of second part of normal averaging ###################
+        
+          # AW 6.6: updated this to reset contact velocity and contact angle micro at the beginning of every time step
+        # (this is done for improved output debugging; notably: has to be done after normal penalization)
+        for node in self.main_model_part.Nodes:
+            node.SetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO, 0.0)
+            node.SetSolutionStepValue(KratosDroplet.CONTACT_VELOCITY, 0.0)
+        
         # curvature is calculated using nodal distance gradient
         self._GetDistanceCurvatureProcess().Execute()
 
