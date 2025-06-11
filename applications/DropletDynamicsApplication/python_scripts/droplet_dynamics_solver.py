@@ -1033,7 +1033,8 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             # AW-C 26.4: sets the number of control points for the NURBS curve (this controls the flexibility of the fit)
             # AW-I 26.4: we could use some optimization to check what number of control points gives best fit (could be repeated e.g. every 50 time steps, similar to whats done in parallel redistancing)
             # AW 2.6: updated to use less CP
-            ctrlpts_size=27# len(data)//2
+            # AW 10.6
+            ctrlpts_size=13# len(data)//2
             # try:
             # AW-C 26.4: Attempts to do an exact interpolating NURBS fit (with fallback on error)  
             # curve = fitting.interpolate_curve(cut_points, degree=degree) #, centripetal=True global fit 
@@ -1874,14 +1875,14 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self._GetSolutionStrategy().Predict()
 
 
-    # AW 2.6: outcommented this for leveque test
-    def SolveSolutionStep(self):
+    # AW 10.6: outcommented this for leveque test
+    """  def SolveSolutionStep(self):
         is_converged = self._GetSolutionStrategy().SolveSolutionStep()
         if not is_converged:
             msg  = "Droplet dynamics solver did not converge for step " + str(self.main_model_part.ProcessInfo[KratosMultiphysics.STEP]) + "\n"
             msg += "corresponding to time " + str(self.main_model_part.ProcessInfo[KratosMultiphysics.TIME]) + "\n"
             KratosMultiphysics.Logger.PrintWarning(self.__class__.__name__, msg)
-        return is_converged 
+        return is_converged  """
 
 
     def FinalizeSolutionStep(self):

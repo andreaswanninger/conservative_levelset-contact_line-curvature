@@ -2995,7 +2995,7 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
 
             // AW 28.5: automatically scaling the coeff based on element size (best practice: 500)
             std::cout << "Element ID: " << this->Id() << ", Element Size = " << element_size << std::endl;
-            double h_coeff = 50000 * element_size;
+            double h_coeff = 500000 * element_size;
             // old coeff
             // double h_coeff = 0.1171875;
             if (contact_angle_micro_gp<=0.0 || contact_angle_micro_gp>=PI){
