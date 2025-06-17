@@ -52,6 +52,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # AW 28.5: added ref point of initial center of droplet on solid surface to fitting settings (for correctly computing normal orientation)
         # AW 2.6: added settings for curvature smoothing + normal penalty, x_threshold for mixed wettability, normal penalty
         # AW 3.6: added parallel redistancing settings 
+        # AW 12.6: added normal penalty settings
         default_settings = KratosMultiphysics.Parameters("""
         {
             "solver_type": "two_fluids",
@@ -111,7 +112,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 "theta_advancing" : 130,
                 "theta_receding" : 130
             },                                               
-            "distance_reinitialization": "variational",
+            "distance_reinitialization": "none",
             "parallel_redistance_max_layers" : 25,
             "max_distance" : 1.0,
             "calculate_exact_distances_to_plane" : true,
@@ -158,7 +159,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             "polynomial_order": 2                                                     
             },
             "normal_penalty_settings": {
-            "do_normal_penalty":false                                                   
+            "do_normal_penalty": false                                                                        
             }                                                                                                                                              
         }""")
 
@@ -257,7 +258,8 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self._normals_csv_unfitted = "unfitted_normals.csv"
         self._normals_csv_fitted = "fitted_normals.csv"
 
-        # Create headers (overwrite on init)yy
+        # Create headers (overwrite on init)
+        # AW 17.6: readapted to be in accordance with latest commit
         with open(self._curvature_csv_unfitted, "w") as f:
             f.write("Time,Element_ID,GaussPoint,UnfittedCurvature\n")
 
@@ -285,6 +287,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # AW 2.6: added user-defined setting for x-threshold in mixed wettability
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.X_threshold, X_threshold)
 
+
         # AW 19.5: Added user-defined fitting settings
         fitting_settings = self.settings["fitting_settings"]
         fitting_type = fitting_settings["fitting_type"].GetString()
@@ -309,8 +312,20 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # AW 2.6: added normal penalty setting
         normal_penalty_settings = self.settings["normal_penalty_settings"]
         self.do_normal_penalty = normal_penalty_settings["do_normal_penalty"].GetBool()
-        # AW 3.6: delete once works
-        print(" do_normal_penalty read from settings:", self.do_normal_penalty)
+        # AW 12.6: added the rest of the settings
+        """  self.is_horizontal_wall = normal_penalty_settings["is_horizontal_wall"].GetBool()
+        self.x_left_wall = normal_penalty_settings["self.x_left_wall"].GetFloat()
+        self.x_right_wall = normal_penalty_settings["self.x_right_wall"].GetFloat()
+        self.y_bottom_wall = normal_penalty_settings["self.y_bottom_wall"].GetFloat()
+        self.tolerance_normalPenalty = normal_penalty_settings["self.tolerance_normalPenalty"].GetFloat()
+        # AW 12.6: delete once works
+        print("do_normal_penalty boolean read from settings:", self.do_normal_penalty)
+        print("is_horizontal_wall boolean read from settings:", self.is_horizontal_wall)
+        print("x_left_wall float read from settings:", self.x_left_wall)
+        print("x_right_wall float read from settings:", self.x_right_wall)
+        print("y_bottom_wall float read from settings:", self.y_bottom_wall)
+        print("tolerance_normalPenalty float read from settings:", self.tolerance_normalPenalty) """
+
 
     def AddDofs(self):
         dofs_and_reactions_to_add = []
@@ -483,12 +498,15 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
     
     def InitializeSolutionStep(self):
 
+        # AW 11.6-C: Initializes or resets the value of the non-historical variable DISTANCE_CORRECTION to 0.0 for all nodes
         # Momentum correction is on by default!
         KratosMultiphysics.VariableUtils().SetNonHistoricalVariable(KratosCFD.DISTANCE_CORRECTION, 0.0, self.main_model_part.Nodes)
 
+        # AW 11.6-C: Recomputes the BDF2 time integration coefficients and stores them in ProcessInfo
         # Recompute the BDF2 coefficients
         (self.time_discretization).ComputeAndSaveBDFCoefficients(self.GetComputingModelPart().ProcessInfo)
 
+        # AW 11.6-C: Moves (convects) the level-set distance field using the velocity from the previous time step.
         # Perform the level-set convection according to the previous step velocity
         self._PerformLevelSetConvection()
 
@@ -496,15 +514,18 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
 
         # AW 21.5: moved all of these lines before the intersection points utility is called
 
+        # AW 11.6-C: Computes the gradient of the DISTANCE variable
         # filtering noises is necessary for curvature calculation
         # distance gradient is used as a boundary condition for smoothing process
         self._GetDistanceGradientProcess().Execute()
 
+        # AW 11.6-C: If the _distance_smoothing flag is True, it runs a smoothing algorithm on the DISTANCE variable
         #AW 21.5: made smoothing conditional again
         if self._distance_smoothing:
             self._GetDistanceSmoothingProcess().Execute()
             KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, "Smoothing process is finished.")
 
+            # AW 11.6-C: Recomputes the distance gradient after smoothing
             # distance gradient is called again to comply with the smoothed/modified DISTANCE
             self._GetDistanceGradientProcess().Execute()
 
@@ -517,6 +538,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             """
             # 1) Represent each point by a tuple rounded to tolerance
             # AW-C 26.4: Helper to make a "key" from a point by rounding each coordinate to avoid floating point errors
+            # when identifying equal points that differ due to numerical precision
             def key(pt):
                 return (round(pt[0]/tol)*tol, round(pt[1]/tol)*tol, round(pt[2]/tol)*tol)
             
@@ -535,6 +557,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 point_elems[k].append(e)
             
             # 2) Find boundary points: keys present in only one element
+            # loops through all point keys and selects only those where the point appears in exactly one element
             boundary_keys = [k for k, elems in point_elems.items() if len(elems)==1]
             
             # 3) Helper to walk one contour starting from start_key
@@ -546,17 +569,23 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 
                 while True:
                     contour.append(current_key)
+                    # Get the list of element IDs that contain this point
                     elems = point_elems[current_key]
                     # choose next element that isn't the one we came from
+                    # If there's no other element, you're at a boundary, and we stop
                     next_elem = elems[0] if elems[0]!=prev_elem else (elems[1] if len(elems)>1 else None)
                     if next_elem is None:
+                        # This is an open contour, and we’re done
                         break  # reached boundary
                     # find the other point of that element
                     pts = elem_points[next_elem]
+                    # other_pt is the next point along the contour
                     other_pt = pts[0] if key(pts[0])!=current_key else pts[1]
                     other_key = key(other_pt)
                     
+                    # Save prev_elem so we can avoid it in the next round
                     prev_elem = next_elem
+                    # If we're back to where we started → it's a closed contour → exit
                     if other_key == start_key:
                         break  # closed loop
                     current_key = other_key
@@ -566,15 +595,21 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         
             # 4) Collect all contours
             # AW-C 26.4: Walks through all boundaries first (open curves), then through all remaining points (closed loops) to collect all contours
+            # contours: will store the final list of ordered 2D point lists
             contours = []
+            # visited: keeps track of points we've already used in a contour (using their rounded keys), to avoid duplicating them
             visited = set()
             # First walk from each boundary (open curve)
             for b in boundary_keys:
                 if b in visited: continue
+                # walk(b) → build a new contour starting from b
                 c = walk(b)
+                # Append it to contours
                 contours.append(c)
+                # Add all points from this contour to visited
                 visited.update(c)
             # Then any closed loops
+            # Now loop through every point key in point_elems
             for k in point_elems:
                 if k in visited: continue
                 c = walk(k)
@@ -598,6 +633,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             """
             # function that computes the squared distance between a point on the curve and the input point
             def distance_squared(u):
+                # get point on the curve at parameter u → curve.evaluate_single(u)
                 pt = np.array(curve.evaluate_single(u)[:2]) # evaluates the 2D coordinates [x, y] of the curve at parameter u
                 return np.sum((pt - point)**2) # np.sum(...) = (x1 - x0)² + (y1 - y0)² --> squared euclidean distance 
 
@@ -621,60 +657,48 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
 
         # AW 2.6: user defined boolean to decide on normal penalty usage
         if self.do_normal_penalty:
-             # debug print, delete once it works
-            print("Normal Penalty term is executed.")
-           
-            # for node in self.main_model_part.Nodes:
-            #     gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-            #     gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-            #     gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
-            #     g = (gx**2+gy**2+gz**2)**0.5
-            #     gx /= g
-            #     gy /= g
-            #     gz /= g
-            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-            #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,gz)
-            #     if node.Y == 0.0:
-            #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,-0.17365)
-            #         if node.X < 0.015:
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, -0.9848)
-            #         elif node.X > 0.015:
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.9848)
+            # debug print, outcomment if check needed
+            # print("Normal Penalization is executed.")
             
+            # set hydrophilic and hydrophobic contact angle to zero initially
             contact_angle_hydrophilic = 0.0
             contact_angle_hydrophobic = 0.0
 
+            # retrieve the user-defined X_threshold, which separates hydrophilic and hydrophobic regimes
             X_threshold = self.main_model_part.ProcessInfo[KratosDroplet.X_threshold]
 
+            # loop over all nodes and checks for an available contact angle micro (computed in C++, ST fct 2)
             for node in self.main_model_part.Nodes:
+                # index 0 denotes current time step
                 angle = node.GetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO, 0)
                 # AW 6.6: adapted to consider mixed wettability configurations (as well as generally, left and right contact angles)
+                # retrieve the corresponding nodal X coordinate
                 x = node.X
+                # if the found angle is not zero, store it conditionally based on the X_threshold
                 if angle != 0.0:
                     if x < X_threshold:
                         contact_angle_hydrophilic = angle
-                        # AW 6.6: remove print statements once it works
-                        print(f"Found contact angle on hydrophilic part of domain: {angle:.4f} at X = {x:.6f}")
+                        # debug print, outcomment if check needed
+                        #print(f"Found contact angle on hydrophilic part of domain: {angle:.4f} at X = {x:.6f}")
                     elif x > X_threshold:
                         contact_angle_hydrophobic = angle
-                        # AW 6.6: remove print statements once it works
-                        print(f"Found contact angle on hydrophobic part of domain: {angle:.4f} at X = {x:.6f}")
+                        # debug print, outcomment if check needed
+                        #print(f"Found contact angle on hydrophobic part of domain: {angle:.4f} at X = {x:.6f}")
 
             # AW 2.6: retrieve hydrophilic, hydrophobic contact angle and X_threshold
             theta_equilibrium_hydrophilic = self.main_model_part.ProcessInfo[KratosDroplet.theta_equilibrium_hydrophilic]
             theta_equilibrium_hydrophobic = self.main_model_part.ProcessInfo[KratosDroplet.theta_equilibrium_hydrophobic]
 
-            # AW 4.6: adapted to allow using normal penalty also on vertical walls
-
             # Define orientation and wall locations (for now; later, make this user-definable in PP.json)
+            # main idea: normal computation differs based on if the wall is vertical or horizontal
+            # AW 11.6
             is_horizontal_wall = False  # droplet sits on bottom/top wall
             x_left_wall = 0.0
             x_right_wall = 0.01
             y_bottom_wall = 0.0
             tol = 1e-8  # floating point tolerance
 
-            # AW 6.6: adapted to consider hydrophilic and hydrophobic contact angle
+            # compute differenece of current contact angle to the equilibrium angle, considering hydrophilic and hydrophobic contact angle
             diff_hydrophilic = abs(contact_angle_hydrophilic - theta_equilibrium_hydrophilic)
             if diff_hydrophilic < 1:
                 beta_hydrophilic = 1
@@ -696,12 +720,13 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             print("beta_hydrophobic=",beta_hydrophobic)
             
             # AW 4.6: adapted to also work for vertical walls
+            # Loop over all nodes to penalize the distance gradient
             for node in self.main_model_part.Nodes:
-                # Normalize initial gradient
+                # retrieve distance gradient nodally
                 gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
                 gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
                 gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
-                # Normalize distance gradients and set them again
+                # Normalize nodal distance gradients (if it is normalized, the normal and distance gradient are identical!)
                 g = (gx**2 + gy**2 + gz**2)**0.5
                 gx /= g
                 gy /= g
@@ -709,9 +734,23 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, gx)
                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y, gy)
                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z, gz)
+                
 
+                # AW 11.6: debug print, delete once works
+                if not is_horizontal_wall:
+                    # print(f"[DEBUG] node ID {node.Id}, — node.X = {node.X:.12f}, — node.Y = {node.Y:.12f}, |Y - 0.0| = {abs(node.Y - y_bottom_wall)}")
+                    # AW 11.3: delete this print statement once it works
+                    #  Get time info from ProcessInfo
+                    """ time = self.main_model_part.ProcessInfo[KratosMultiphysics.TIME]
+                    step = self.main_model_part.ProcessInfo[KratosMultiphysics.STEP]
+                    print(f"[Step {step} | t = {time:.6f}] Unpenalized normal at X = {node.X:.6f}")
+                    print("gx before: ", gx)
+                    print("gy before: ", gy)
+                    print("gz before: ", gz)
+                                            """
                 # Apply contact angle logic on horizontal bottom wall (Y ≈ 0)
                 if is_horizontal_wall and abs(node.Y - y_bottom_wall) < tol:
+                    # Penalize hydrophilic eq normal on the left wall (only if penalty coefficient is nonzero)
                     if node.X <= X_threshold and beta_hydrophilic > 0.0:
                         gy = math.cos(contact_angle_hydrophilic * math.pi / 180) + beta_hydrophilic * (
                             math.cos(theta_equilibrium_hydrophilic * math.pi / 180) - math.cos(contact_angle_hydrophilic * math.pi / 180)
@@ -743,6 +782,8 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                             gx = math.sin(contact_angle_hydrophilic * math.pi / 180) + beta_hydrophilic * (
                                 math.sin(theta_equilibrium_hydrophilic * math.pi / 180) - math.sin(contact_angle_hydrophilic * math.pi / 180)
                             )
+                            # AW adapted 11.6: gx flipping always needed on left wall
+                            # AW 17.6: readapted to be in accordance with latest commit
                             if node.X < self.reference_point_x:
                                 gx *= -1
                          # AW 6.6: corrected this part
@@ -753,10 +794,15 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                             gx = math.sin(contact_angle_hydrophobic * math.pi / 180) + beta_hydrophobic * (
                                 math.sin(theta_equilibrium_hydrophobic * math.pi / 180) - math.sin(contact_angle_hydrophobic * math.pi / 180)
                             )
+                            # AW 17.6: readapted to be in accordance with latest commit
                             if node.X < self.reference_point_x:
                                 gx *= -1
                         # Clockwise 90 deg rotation for left wall
                         gx, gy = gy, -gx
+
+
+                        
+ 
                     # RIGHT wall
                     elif abs(node.X - x_right_wall) < tol:
                          # AW 6.6: corrected this part
@@ -767,6 +813,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                             gx = math.sin(contact_angle_hydrophilic * math.pi / 180) + beta_hydrophilic * (
                                 math.sin(theta_equilibrium_hydrophilic * math.pi / 180) - math.sin(contact_angle_hydrophilic * math.pi / 180)
                             )
+                            # AW 17.6: readapted to be in accordance with latest commit
                             if node.X < self.reference_point_x:
                                 gx *= -1
                          # AW 6.6: corrected this part
@@ -777,132 +824,32 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                             gx = math.sin(contact_angle_hydrophobic * math.pi / 180) + beta_hydrophobic * (
                                 math.sin(theta_equilibrium_hydrophobic * math.pi / 180) - math.sin(contact_angle_hydrophobic * math.pi / 180)
                             )
+                           # AW 17.6: readapted to be in accordance with latest commit
                             if node.X < self.reference_point_x:
                                 gx *= -1
 
                         # rotate by 90deg counter-clockwise for rightvertical wall
                         gx, gy = -gy, gx
-    
+
+                        # AW 11.3: delete this print statement once it works
+                        """  print(f"[Step {step} | t = {time:.6f}] Penalized normal at X = {node.X:.6f}")
+                        print("  gx after:", gx)
+                        print("  gy after:", gy)
+                        print("  gz after:", gz) """
+
+               
                 # Normalize again and set
                 g = (gx**2 + gy**2 + gz**2)**0.5
                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, gx / g)
                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y, gy / g)
                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z, gz / g)
+               
 
-
-                # if node.Y == 0.0:
-                #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0.50754)
-                #     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z,0.0)
-                #     if node.X < 0.015:
-                #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,-0.86163)
-                #     elif node.X > 0.015:
-                #         node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0.86163)
-
-            # nx1=-1
-            # nx2=1
-            # ny1=ny2=0
-            # for node in self.main_model_part.Nodes:
-            #     nx=ny=0
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
-            #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
-            #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-            #         if -0.001<diss <0.001 and 0.5 < (nx**2 + ny**2)**0.5:
-            #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-            #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-            #             if node.X < 0.015:
-            #                 nx1 = nx
-            #                 ny1 = ny
-            #                 if node.Is(KratosMultiphysics.BOUNDARY):
-            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
-            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
-            #                 else:
-            #                     nx1 = (3*nx1-gx)/2
-            #                     ny1 = (3*ny1-gy)/2
-            #             elif node.X > 0.015:
-            #                 nx2 = nx
-            #                 ny2 = ny
-            #                 if node.Is(KratosMultiphysics.BOUNDARY):
-            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,0)
-            #                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,0)
-            #                 else:
-            #                     nx2 = (3*nx2-gx)/2
-            #                     ny2 = (3*ny2-gy)/2
-
-
-            
-            # for node in self.main_model_part.Nodes:
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         if node.Y == 0.0:
-            #             if node.X < 0.015:
-            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx1)
-            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny1)
-            #             elif node.X > 0.015:
-            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,nx2)
-            #                 node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,ny2)
-            #################################################################################################
-
-
-            # for node in self.main_model_part.Nodes:
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-            #         gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-            #         if gx > 0.0:
-            #             nx = 0.9848
-            #         elif gx < 0.0:
-            #             nx = -0.9848
-            #         if gy > 0.0:
-            #             ny = 0.1736
-            #         elif gy < 0.0:
-            #             ny = -0.1736
-            #         if gx != 0.0 or gy != 0.0:
-            #             g = (gx**2+gy**2)**(0.5)
-            #             gx = nx * g
-            #             gy = ny *g
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-
-            # nx1=-1
-            # nx2=1
-            # ny1=ny2=0
-            # for node in self.main_model_part.Nodes:
-            #     nx=ny=0
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         nx = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X)
-            #         ny = node.GetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y)
-            #         diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-            #         if -0.001<diss <0.001 and 0.5<=(nx**2 + ny**2)**0.5:
-            #             if node.X < 0.015:
-            #                 nx1 = nx
-            #                 ny1 = ny
-            #             elif node.X > 0.015:
-            #                 nx2 = nx
-            #                 ny2 = ny
-
-            # for node in self.main_model_part.Nodes:
-            #     if node.Is(KratosMultiphysics.BOUNDARY):
-            #         if node.Y == 0.0:
-            #             gx = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X)
-            #             gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
-            #             g = (gx**2+gy**2)**(0.5)
-            #             diss = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE)
-            #             if node.X < 0.015 and -0.001 < diss < 0.001:
-            #                 gx = nx1 * g
-            #                 gy = ny1 *g
-            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx1)
-            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny1)
-            #             elif node.X > 0.015 and -0.001 < diss < 0.001:
-            #                 gx = nx2 * g
-            #                 gy = ny2 *g
-            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_X,nx2)
-            #                 node.SetSolutionStepValue(KratosDroplet.NORMAL_VECTOR_Y,ny2)
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X,gx)
-            #             node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y,gy)
-            # AW 14.5: end of additional normal averaging
-            ####################### end of second part of normal averaging ###################
+            ####################### end of normal penalization ###################
         
           # AW 6.6: updated this to reset contact velocity and contact angle micro at the beginning of every time step
         # (this is done for improved output debugging; notably: has to be done after normal penalization)
+        # AW 11.6: comment for now, but has to be commented!
         for node in self.main_model_part.Nodes:
             node.SetSolutionStepValue(KratosDroplet.CONTACT_ANGLE_MICRO, 0.0)
             node.SetSolutionStepValue(KratosDroplet.CONTACT_VELOCITY, 0.0)
@@ -1034,7 +981,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             # AW-I 26.4: we could use some optimization to check what number of control points gives best fit (could be repeated e.g. every 50 time steps, similar to whats done in parallel redistancing)
             # AW 2.6: updated to use less CP
             # AW 10.6
-            ctrlpts_size=13# len(data)//2
+            ctrlpts_size=27# len(data)//2
             # try:
             # AW-C 26.4: Attempts to do an exact interpolating NURBS fit (with fallback on error)  
             # curve = fitting.interpolate_curve(cut_points, degree=degree) #, centripetal=True global fit 
@@ -1876,13 +1823,13 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
 
 
     # AW 10.6: outcommented this for leveque test
-    """  def SolveSolutionStep(self):
+    def SolveSolutionStep(self):
         is_converged = self._GetSolutionStrategy().SolveSolutionStep()
         if not is_converged:
             msg  = "Droplet dynamics solver did not converge for step " + str(self.main_model_part.ProcessInfo[KratosMultiphysics.STEP]) + "\n"
             msg += "corresponding to time " + str(self.main_model_part.ProcessInfo[KratosMultiphysics.TIME]) + "\n"
             KratosMultiphysics.Logger.PrintWarning(self.__class__.__name__, msg)
-        return is_converged  """
+        return is_converged 
 
 
     def FinalizeSolutionStep(self):

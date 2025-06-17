@@ -2509,7 +2509,7 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     const unsigned int NumIntGP = rIntShapeFunctions.size1();
     // AW 25.3: print statement added
     // KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Number of Gauss Points: " << NumIntGP << std::endl;
-    // size.2 returns the number of rows which refers to the number of rows
+    // size.2 returns the number of rows which refers to the number of gauss points
     const unsigned int NumNodes = rIntShapeFunctions.size2();
     //const unsigned int NumDim = rIntNormalsNeg[0].size();
     // AW 25.3: print statement added
@@ -2520,14 +2520,6 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     // Using the = sign, p_geom is a local variable that stores the geometry pointer
     GeometryType::Pointer p_geom = this->pGetGeometry();
 
-        // AW 21.4: Print x, y coordinates of all element nodes
-    KRATOS_INFO("DropletDynamicsElement") << "Element ID: " << this->Id() << " has nodes at:" << std::endl;
-    for (unsigned int i = 0; i < p_geom->PointsNumber(); ++i) {
-        const double x = (*p_geom)[i].X();
-        const double y = (*p_geom)[i].Y();
-        KRATOS_INFO("DropletDynamicsElement") << "  Node " << i << ": (" << x << ", " << y << ")" << std::endl;
-    }
-
     // AW 21.4: Check (for first, simple cases) only one nodal position to select equilibrium contact angle mode
     // --> sufficient for different wettabilities on walls, but to be adapted for generic cases
     double node_x = (*p_geom)[0].X();  // Using the first node (index 0) for the check
@@ -2537,13 +2529,13 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     if (node_x > x_threshold) {
         contact_angle_equilibrium = Theta_equilibrium_hydrophobic * PI /180;
         // AW 24.4: print statement removed
-        KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
-            << "Using hydrophobic angle (" << contact_angle_equilibrium / PI * 180 << "°) at x = " << node_x << std::endl;
+/*         KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
+            << "Using hydrophobic angle (" << contact_angle_equilibrium / PI * 180 << "°) at x = " << node_x << std::endl; */
     } else {
         contact_angle_equilibrium = Theta_equilibrium_hydrophilic * PI/180;
         // AW 24.4: print statement removed
-        KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
-            << "Using hydrophilic angle (" << contact_angle_equilibrium / PI * 180  << "°) at x = " << node_x << std::endl;
+        /* KRATOS_INFO("DropletDynamicsElement::SurfaceTension") 
+            << "Using hydrophilic angle (" << contact_angle_equilibrium / PI * 180  << "°) at x = " << node_x << std::endl; */
     }
 
 
@@ -2555,7 +2547,6 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
 
     // AW 29.4: added this, to be in accordance with Alirezas latest implementation
     //////////////////////////
-    // AW-C 5.6: these are used for debugging purposes, to track the force acting at the cl
     Vector force_sum_vector;
     force_sum_vector.resize(Dim);
     force_sum_vector = ZeroVector(Dim); // Initialize with zeros
@@ -2594,8 +2585,8 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
 
 
     // AW 18.3: this is a loop over the number of segments of the contact line FOR THE CURRENT ELEMENT (!)
-    // Possibly, this loop is legacy from the 3d implementation, where the contact line is 2d and has integration points
-    // in 2d, it is a point and it is questionary if this loop is even needed
+    // Possibly, this loop is legacy from the 3d implementation, where the contact line is 1d and has integration points
+    // in 2d, it is a point and it is questionary if this loop is even executed at all
     for (unsigned int i_cl = 0; i_cl < rCLWeights.size(); i_cl++){
         // AW 19.3: Debug Print Statement added
         // AW 24.4: print statement removed
@@ -2818,27 +2809,15 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             // AW 25.3: Debug Print Statement added
             // AW 24.4: print statement removed
             // KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Wall Tangent at Gauss Point: " << wall_tangent << std::endl;
-
-            // AW 5.6: adapted this part to distinguish horizontal and vertical wall cases
-            const bool is_horizontal_wall = std::abs(wall_tangent[0]) > 1e-6;
-
-            if (is_horizontal_wall) {
-                // For horizontal walls, apply the flipping logic if the unit vector points in +z
-                if ((1 - 1e-5) < unit_vector[2] && unit_vector[2] < (1 + 1e-5)) {
-                    // Flip both vectors to ensure consistent orientation
-                    contact_vector_macro = -contact_vector_macro;
-                    wall_tangent = -wall_tangent;
-                }
-            } else {
-                // For vertical walls: ensure wall_tangent always points in -y direction
-                wall_tangent[1] = -1.0;
-
-                // AW 5.6: if X is beyond threshold, flip the contact angle macro
-                if (node_x > x_threshold) {
-                    contact_vector_macro = -contact_vector_macro;
-                }
+            if ((1-1e-5) < unit_vector[2] && unit_vector[2] < (1+1e-5)) {
+                // AW 25.3: Debug Print Statement added
+                // AW 24.4: print statement added
+               /*  KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Prior contact vector macro: " << contact_vector_macro << std::endl;
+                KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Prior wall tangent: " << wall_tangent << std::endl;
+                KRATOS_INFO("DropletDynamicsElement::SurfaceTension") << "Reverting contact vector macro and wall tangent!! " << std::endl; */
+                contact_vector_macro = -contact_vector_macro;
+                wall_tangent = -wall_tangent;
             }
-
             ////////
             // AW 18.3: This line computes the characteristic element size based on the number of nodes.
             // It uses a conditional (ternary) operator
@@ -2847,18 +2826,10 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
 
             //const double contact_angle_macro_gp = avg_contact_angle;
             //////// 
-
-            // AW 5.6: added this print for debug purposes:
-            std::cout << "contact_vector_macro = " << contact_vector_macro << std::endl;
-            double dot_product = inner_prod(wall_tangent, contact_vector_macro);
-            std::cout << "dot product = " << dot_product << std::endl;
-            const double contact_angle_macro_gp = std::acos(dot_product);
-
             //AW 18.3: the macro contact angle at the gauss point is computed by using the inverse of the cosine btw
             // the wall tangent and the contact vector; it gives the angle btw the wall tangent and the movement direction
             // of the contact line
-            // AW 5.6: outcommented this line for now
-            // const double contact_angle_macro_gp = std::acos(inner_prod(wall_tangent,contact_vector_macro));
+            const double contact_angle_macro_gp = std::acos(inner_prod(wall_tangent,contact_vector_macro));
             // AW 24.4: print statement removed
             // AW 12.5: print statement put back to be in accordance with Alirezas latest implementation
              std::cout<<"contact_angle_macro_gp = "<<contact_angle_macro_gp<<std::endl<<"wall_tangent = "<<wall_tangent<<std::endl<<"wall_normal_gp = "<< wall_normal_gp<<std::endl;
@@ -2961,17 +2932,6 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             // AW 18.3: equals cos(theta_eq), multiplied by an imported coefficient
             // --> the coefficient should normally suffice as penalty coefficient
             const double coefficientS = coefficient*std::cos(contact_angle_equilibrium);
-            
-            // AW 6.6: added this print to check above computation
-            KRATOS_INFO("DropletDynamicsElement::SurfaceTension")
-            << "surface tension coefficient: " << coefficient
-            << " | coefficientS " << coefficientS << std::endl; 
-
-            // AW 6.6: added this; for the angle computation at vertical walls, we need the wall tangent to point (0,-1,0);
-            // But for enforcing the tangential force, it needs to be (0,1,0), away from the interface into the gas domain
-            if (!is_horizontal_wall) {
-                wall_tangent = -wall_tangent;
-                }
 
             //KRATOS_INFO("two fluids NS") << "element_size= " << element_size << std::endl;
             //KRATOS_INFO("two fluids NS") << "contact_angle_macro_gp= " << contact_angle_macro_gp << std::endl;
@@ -2994,8 +2954,7 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             << " | Projected Element Size: " << element_size << std::endl; */
 
             // AW 28.5: automatically scaling the coeff based on element size (best practice: 500)
-            std::cout << "Element ID: " << this->Id() << ", Element Size = " << element_size << std::endl;
-            double h_coeff = 500000 * element_size;
+            double h_coeff = 500 * element_size;
             // old coeff
             // double h_coeff = 0.1171875;
             if (contact_angle_micro_gp<=0.0 || contact_angle_micro_gp>=PI){
@@ -3046,10 +3005,7 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
                     if (!Quasi_static_contact_angle) {
                         // AW 12.5: changed to be in accordance with Alirezas latest implementation
                         rhs[ i*(Dim+1) + dimi ] -= h_coeff*coefficient*contact_vector_microS[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i);
-                        rhs[ i*(Dim+1) + dimi ] += h_coeff*coefficientS*wall_tangent[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i); //Contac-line tangential force 
-                        // AW 5.6: made this change */
-                        /* rhs[ i*(Dim+1) + dimi ] += h_coeff * coefficient * (std::cos(contact_angle_macro_gp) - std::cos(contact_angle_equilibrium)) 
-                                * wall_tangent[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp,i); */
+                        rhs[ i*(Dim+1) + dimi ] += h_coeff*coefficientS*wall_tangent[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i); //Contac-line tangential force
                     }
                     else {
                         // AW 9.5: approach Alireza, outcommented for now:
