@@ -76,6 +76,10 @@ namespace Kratos
     KRATOS_CREATE_VARIABLE(double, penalty_coefficient)
     // AW 2.6
     KRATOS_CREATE_VARIABLE(double, X_threshold)
+    // AW 25.6
+    KRATOS_CREATE_VARIABLE(bool, smooth_scaling)
+    KRATOS_CREATE_VARIABLE(double, smooth_scaling_lower_threshold)
+    KRATOS_CREATE_VARIABLE(double, smooth_scaling_upper_threshold)
 
     // AW 28.4: Fitted curvature and normal at the node 
     KRATOS_CREATE_VARIABLE(double, FITTED_CURVATURE)

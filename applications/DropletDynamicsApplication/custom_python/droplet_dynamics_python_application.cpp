@@ -99,6 +99,10 @@ PYBIND11_MODULE(KratosDropletDynamicsApplication,m)
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, penalty_coefficient)
     // AW 2.6
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, X_threshold)
+    // AW 25.6
+    KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, smooth_scaling)
+    KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, smooth_scaling_lower_threshold)
+    KRATOS_REGISTER_IN_PYTHON_VARIABLE(m, smooth_scaling_upper_threshold)
 
     // AW 28.4:fitted curvature and normals
     KRATOS_REGISTER_IN_PYTHON_VARIABLE(m,  FITTED_CURVATURE)

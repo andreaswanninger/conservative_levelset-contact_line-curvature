@@ -22,6 +22,10 @@
 #include <fstream>  // for std::ofstream
 #include <iomanip>  // for std::setprecision
 
+// AW 25.6: necessary include
+#include <cmath>    // for std::abs, std::cos
+#include <iostream> // for std::cout
+
 namespace Kratos
 {
 
@@ -84,6 +88,10 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
     const bool Quasi_static_contact_angle = rCurrentProcessInfo[quasi_static_contact_angle];
     // AW 2.6: access X_threshold
     const double x_threshold = rCurrentProcessInfo[X_threshold];
+    // AW 25.6
+    const bool Smooth_scaling = rCurrentProcessInfo[smooth_scaling];
+    const double Smooth_scaling_lower_threshold = rCurrentProcessInfo[smooth_scaling_lower_threshold];
+    const double Smooth_scaling_upper_threshold = rCurrentProcessInfo[smooth_scaling_upper_threshold];
 
     // AW 19.5: added to access user-defined variables related to fitting
     const std::string& Fitting_type = rCurrentProcessInfo[FittingType];
@@ -394,6 +402,10 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
                         current_time,
                         // AW 2.6
                         x_threshold,
+                        // AW 25.6
+                        Smooth_scaling,
+                        Smooth_scaling_lower_threshold,
+                        Smooth_scaling_upper_threshold,
                         // AW 19.5
                         Fitting_type,
                         Use_partial_fitting,
@@ -2496,6 +2508,10 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
     const double Penalty_coefficient,
     // AW 2.6
     const double x_threshold,
+    // AW 25.6
+    const bool Smooth_scaling,
+    const double Smooth_scaling_lower_threshold,
+    const double Smooth_scaling_upper_threshold,
     // AW 19.5
     const std::string& Fitting_type,
     const int Normal_evaluation_mode
@@ -3001,6 +3017,36 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
             if (contact_angle_micro_gp<=0.0 || contact_angle_micro_gp>=PI){
                 h_coeff = 0.0;
             }
+
+            // AW 25.6: smooth scaling based on difference to equilibrium contact angle
+            if (Smooth_scaling){
+                double diff = std::abs(contact_angle_equilibrium/PI*180 - contact_angle_macro_gp/PI*180);
+                double beta;
+                if (diff < Smooth_scaling_lower_threshold) {
+                    beta = 1.0;
+                } else if (diff > Smooth_scaling_upper_threshold) {
+                    beta = 0.0;
+                } else {
+                    beta = 0.5 * (1.0 + std::cos(PI * (diff - Smooth_scaling_lower_threshold) / (Smooth_scaling_upper_threshold - Smooth_scaling_lower_threshold)));
+                }
+
+                // Print debug information
+                std::cout << "  Smooth_scaling_lower_threshold  = " << Smooth_scaling_lower_threshold << std::endl;
+                std::cout << "  Smooth_scaling_upper_threshold  = " << Smooth_scaling_upper_threshold << std::endl;
+                std::cout << "  Contact angle macro  = " << contact_angle_macro_gp << std::endl;
+                std::cout << "  Contact angle equil. = " << contact_angle_equilibrium << std::endl;
+                std::cout << "  Angle difference     = " << diff << std::endl;
+                std::cout << "  Beta                 = " << beta << std::endl;
+                std::cout << "  h_coeff (before)     = " << h_coeff << std::endl;
+
+                // Smoothly reduce h_coeff
+                h_coeff *= (1.0 - beta);
+
+                std::cout << "  h_coeff (after)      = " << h_coeff << std::endl;
+            }
+
+
+
             // AW 18.3: Once the contact line forces are computed at Gauss points, they must be redistributed to the nodes using the shape functions        
             // Outer loop over number of nodes
 
@@ -3307,6 +3353,10 @@ void DropletDynamicsElement<TElementData>::AddSurfaceTensionContribution(
     const double current_time,
     // AW 2.6
     const double x_threshold,
+    // AW 25.6
+    const bool Smooth_scaling,
+    const double Smooth_scaling_lower_threshold,
+    const double Smooth_scaling_upper_threshold,
     // AW 19.5: added the user-defined variables regarding fitting
     const std::string& Fitting_type,
     const bool Use_partial_fitting,
@@ -3360,6 +3410,10 @@ void DropletDynamicsElement<TElementData>::AddSurfaceTensionContribution(
         Penalty_coefficient,
         // AW 2.6
         x_threshold,
+        // AW 25.6
+        Smooth_scaling,
+        Smooth_scaling_lower_threshold,
+        Smooth_scaling_upper_threshold,
         // AW 19.5: added the fitting variables
         Fitting_type,
         Normal_evaluation_mode

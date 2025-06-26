@@ -132,7 +132,10 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 "Theta_equilibrium_hydrophilic" : 50,
                 "Theta_equilibrium_hydrophobic" : 130,                                     
                 "Penalty_coefficient" : 100,
-                "X_threshold" : 0.005                                                                                     
+                "X_threshold" : 0.005,
+                "smooth_scaling" : false,
+                "smooth_scaling_lower_threshold" : 1,
+                "smooth_scaling_upper_threshold" : 3
             },
             "convection_diffusion_settings": {
                 "Perform_conservative_law": false,
@@ -292,6 +295,13 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.penalty_coefficient, Penalty_coefficient)
         # AW 2.6: added user-defined setting for x-threshold in mixed wettability
         self.main_model_part.ProcessInfo.SetValue(KratosDroplet.X_threshold, X_threshold)
+        # AW 25.6
+        smooth_scaling = qscl_settings["smooth_scaling"].GetBool()
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.smooth_scaling, smooth_scaling)
+        smooth_scaling_lower_threshold = qscl_settings["smooth_scaling_lower_threshold"].GetDouble()
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.smooth_scaling_lower_threshold, smooth_scaling_lower_threshold)
+        smooth_scaling_upper_threshold = qscl_settings["smooth_scaling_upper_threshold"].GetDouble()
+        self.main_model_part.ProcessInfo.SetValue(KratosDroplet.smooth_scaling_upper_threshold, smooth_scaling_upper_threshold)
 
 
         # AW 19.5: Added user-defined fitting settings
@@ -325,14 +335,6 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self.y_bottom_wall = normal_penalty_settings["y_bottom_wall"].GetDouble()
         self.tolerance_normal_penalty = normal_penalty_settings["tolerance_normal_penalty"].GetDouble()
         self.fix_static_equilibrium = normal_penalty_settings["fix_static_equilibrium"].GetBool()
-        # AW 25.6: delete once works
-        print("do_normal_penalty boolean read from settings:", self.do_normal_penalty)
-        print("is_horizontal_wall boolean read from settings:", self.is_horizontal_wall)
-        print("x_left_wall float read from settings:", self.x_left_wall)
-        print("x_right_wall float read from settings:", self.x_right_wall)
-        print("y_bottom_wall float read from settings:", self.y_bottom_wall)
-        print("tolerance_normalPenalty float read from settings:", self.tolerance_normal_penalty)
-        print("fix_static_equilibrium boolean read from settings:", self.fix_static_equilibrium)
 
 
     def AddDofs(self):
@@ -709,13 +711,6 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             tol = self.tolerance_normal_penalty
             # AW 19.6: added to enforce to "fix" the static eq contact angle, in accordance with Gruending 2020
             fix_StaticEqContactAngle = self.fix_static_equilibrium
-
-            print("is_horizontal_wall boolean used in normal penalization:", is_horizontal_wall)
-            print("x_left_wall float used in normal penalization:", x_left_wall)
-            print("x_right_wall float used in normal penalization:", x_right_wall)
-            print("y_bottom_wall float used in normal penalization:", y_bottom_wall)
-            print("tolerance_normalPenalty float used in normal penalization:", tol)
-            print("fix_static_equilibrium boolean used in normal penalization:", fix_StaticEqContactAngle)
 
             # compute differenece of current contact angle to the equilibrium angle, considering hydrophilic and hydrophobic contact angle
             diff_hydrophilic = abs(contact_angle_hydrophilic - theta_equilibrium_hydrophilic)
