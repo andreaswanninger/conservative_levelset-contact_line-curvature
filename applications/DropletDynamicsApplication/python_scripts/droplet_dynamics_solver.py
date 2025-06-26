@@ -52,7 +52,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # AW 28.5: added ref point of initial center of droplet on solid surface to fitting settings (for correctly computing normal orientation)
         # AW 2.6: added settings for curvature smoothing + normal penalty, x_threshold for mixed wettability, normal penalty
         # AW 3.6: added parallel redistancing settings 
-        # AW 12.6: added normal penalty settings
+        # AW 25.6: added normal penalty settings
         default_settings = KratosMultiphysics.Parameters("""
         {
             "solver_type": "two_fluids",
@@ -159,7 +159,13 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             "polynomial_order": 2                                                     
             },
             "normal_penalty_settings": {
-            "do_normal_penalty": false                                                                        
+            "do_normal_penalty": false,
+            "is_horizontal_wall": false,
+            "x_left_wall" : 0,
+            "x_right_wall": 1,
+            "y_bottom_wall": 0,
+            "tolerance_normal_penalty": 1e-8,
+            "fix_static_equilibrium": false
             }                                                                                                                                              
         }""")
 
@@ -312,19 +318,21 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # AW 2.6: added normal penalty setting
         normal_penalty_settings = self.settings["normal_penalty_settings"]
         self.do_normal_penalty = normal_penalty_settings["do_normal_penalty"].GetBool()
-        # AW 12.6: added the rest of the settings
-        """  self.is_horizontal_wall = normal_penalty_settings["is_horizontal_wall"].GetBool()
-        self.x_left_wall = normal_penalty_settings["self.x_left_wall"].GetFloat()
-        self.x_right_wall = normal_penalty_settings["self.x_right_wall"].GetFloat()
-        self.y_bottom_wall = normal_penalty_settings["self.y_bottom_wall"].GetFloat()
-        self.tolerance_normalPenalty = normal_penalty_settings["self.tolerance_normalPenalty"].GetFloat()
-        # AW 12.6: delete once works
+        # AW 25.6: added the rest of the settings
+        self.is_horizontal_wall = normal_penalty_settings["is_horizontal_wall"].GetBool()
+        self.x_left_wall = normal_penalty_settings["x_left_wall"].GetDouble()
+        self.x_right_wall = normal_penalty_settings["x_right_wall"].GetDouble()
+        self.y_bottom_wall = normal_penalty_settings["y_bottom_wall"].GetDouble()
+        self.tolerance_normal_penalty = normal_penalty_settings["tolerance_normal_penalty"].GetDouble()
+        self.fix_static_equilibrium = normal_penalty_settings["fix_static_equilibrium"].GetBool()
+        # AW 25.6: delete once works
         print("do_normal_penalty boolean read from settings:", self.do_normal_penalty)
         print("is_horizontal_wall boolean read from settings:", self.is_horizontal_wall)
         print("x_left_wall float read from settings:", self.x_left_wall)
         print("x_right_wall float read from settings:", self.x_right_wall)
         print("y_bottom_wall float read from settings:", self.y_bottom_wall)
-        print("tolerance_normalPenalty float read from settings:", self.tolerance_normalPenalty) """
+        print("tolerance_normalPenalty float read from settings:", self.tolerance_normal_penalty)
+        print("fix_static_equilibrium boolean read from settings:", self.fix_static_equilibrium)
 
 
     def AddDofs(self):
@@ -690,16 +698,24 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             theta_equilibrium_hydrophobic = self.main_model_part.ProcessInfo[KratosDroplet.theta_equilibrium_hydrophobic]
 
             # Define orientation and wall locations (for now; later, make this user-definable in PP.json)
+            # AW 25.6: adaptations made to read everything from PP.json
             # main idea: normal computation differs based on if the wall is vertical or horizontal
             # AW 11.6
-            is_horizontal_wall = True  # droplet sits on bottom/top wall
+            is_horizontal_wall = self.is_horizontal_wall  # droplet sits on bottom/top wall
             # AW adapted 19.6
-            x_left_wall = 0.02
-            x_right_wall = 0.03
-            y_bottom_wall = 0.0
-            tol = 1e-8  # floating point tolerance
+            x_left_wall = self.x_left_wall
+            x_right_wall = self.x_right_wall
+            y_bottom_wall = self.y_bottom_wall
+            tol = self.tolerance_normal_penalty
             # AW 19.6: added to enforce to "fix" the static eq contact angle, in accordance with Gruending 2020
-            fix_StaticEqContactAngle = False
+            fix_StaticEqContactAngle = self.fix_static_equilibrium
+
+            print("is_horizontal_wall boolean used in normal penalization:", is_horizontal_wall)
+            print("x_left_wall float used in normal penalization:", x_left_wall)
+            print("x_right_wall float used in normal penalization:", x_right_wall)
+            print("y_bottom_wall float used in normal penalization:", y_bottom_wall)
+            print("tolerance_normalPenalty float used in normal penalization:", tol)
+            print("fix_static_equilibrium boolean used in normal penalization:", fix_StaticEqContactAngle)
 
             # compute differenece of current contact angle to the equilibrium angle, considering hydrophilic and hydrophobic contact angle
             diff_hydrophilic = abs(contact_angle_hydrophilic - theta_equilibrium_hydrophilic)
