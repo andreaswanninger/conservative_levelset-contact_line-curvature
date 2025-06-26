@@ -692,11 +692,14 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             # Define orientation and wall locations (for now; later, make this user-definable in PP.json)
             # main idea: normal computation differs based on if the wall is vertical or horizontal
             # AW 11.6
-            is_horizontal_wall = False  # droplet sits on bottom/top wall
-            x_left_wall = 0.0
-            x_right_wall = 0.01
+            is_horizontal_wall = True  # droplet sits on bottom/top wall
+            # AW adapted 19.6
+            x_left_wall = 0.02
+            x_right_wall = 0.03
             y_bottom_wall = 0.0
             tol = 1e-8  # floating point tolerance
+            # AW 19.6: added to enforce to "fix" the static eq contact angle, in accordance with Gruending 2020
+            fix_StaticEqContactAngle = False
 
             # compute differenece of current contact angle to the equilibrium angle, considering hydrophilic and hydrophobic contact angle
             diff_hydrophilic = abs(contact_angle_hydrophilic - theta_equilibrium_hydrophilic)
@@ -718,6 +721,11 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             else:
                 beta_hydrophobic = 0.5*(1+math.cos(math.pi*(diff_hydrophobic-1.0)/8))
             print("beta_hydrophobic=",beta_hydrophobic)
+
+            # AW 19.6: added to enforce to "fix" the static eq contact angle, in accordance with Gruending 2020
+            if fix_StaticEqContactAngle:
+                beta_hydrophilic = 1
+                beta_hydrophobic = 1
             
             # AW 4.6: adapted to also work for vertical walls
             # Loop over all nodes to penalize the distance gradient
@@ -727,13 +735,20 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 gy = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y)
                 gz = node.GetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z)
                 # Normalize nodal distance gradients (if it is normalized, the normal and distance gradient are identical!)
+                # AW 18.6: this added, as needed when cls is used
                 g = (gx**2 + gy**2 + gz**2)**0.5
-                gx /= g
-                gy /= g
-                gz /= g
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, gx)
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y, gy)
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z, gz)
+                if g!=0:
+                    gx /= g
+                    gy /= g
+                    gz /= g
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, gx)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y, gy)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z, gz)
+                else:
+                    print("Zero distance gradients!")
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, 0)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y, 0)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z, 0)
                 
 
                 # AW 11.6: debug print, delete once works
@@ -800,6 +815,9 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                         # Clockwise 90 deg rotation for left wall
                         gx, gy = gy, -gx
 
+                        # AW 19.6
+                        print("Normal enforced at left wall; gx,gy components: ", gx, gy)
+
 
                         
  
@@ -837,12 +855,24 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                         print("  gy after:", gy)
                         print("  gz after:", gz) """
 
+                        # AW 19.6
+                        print("Normal enforced at right wall; gx,gy components: ", gx, gy)
                
                 # Normalize again and set
                 g = (gx**2 + gy**2 + gz**2)**0.5
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, gx / g)
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y, gy / g)
-                node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z, gz / g)
+                # AW 18.6: this added for the cls method to work
+                if g!=0:
+                    gx /= g
+                    gy /= g
+                    gz /= g
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, gx)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y, gy)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z, gz)
+                else:
+                    print("Zero distance gradients!")
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, 0)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y, 0)
+                    node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z, 0)
                
 
             ####################### end of normal penalization ###################
