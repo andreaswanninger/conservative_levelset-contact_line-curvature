@@ -119,8 +119,9 @@ void DropletDynamicsElement<TElementData>::CalculateLocalSystem(
     if constexpr (TElementData::ElementManagesTimeIntegration){
         TElementData data;
         data.Initialize(*this, rCurrentProcessInfo);
-
-        const double zeta = 5.0e-1;//1.0;//0.7;//
+        
+        // AW 27.6: updated zeta coefficient
+        const double zeta = 1e-2;//1.0;//0.7;//
         // AW 30.5
         const double surface_tension_coefficient = 0.04;//0.0;
         
@@ -2884,7 +2885,9 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
 
             // AW 18.3: zeta_effective needed for the molecular kinetic theory; for static contact line, not needed
             // But: currently, seemingly zero anyways
-            double zeta_effective = zeta*0.0;
+            double zeta_effective = zeta*1;
+            // AW 27.6: print statement added, delete
+            std::cout<<"zeta_effective = "<<zeta_effective<<std::endl;
 
             // AW 18.3: this projects the velocity of the gauss point onto the tangential (to the wall) direction
             const double contact_velocity_gp = inner_prod(wall_tangent,velocity_gp);
@@ -3030,14 +3033,6 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
                     beta = 0.5 * (1.0 + std::cos(PI * (diff - Smooth_scaling_lower_threshold) / (Smooth_scaling_upper_threshold - Smooth_scaling_lower_threshold)));
                 }
 
-                // Print debug information
-                std::cout << "  Smooth_scaling_lower_threshold  = " << Smooth_scaling_lower_threshold << std::endl;
-                std::cout << "  Smooth_scaling_upper_threshold  = " << Smooth_scaling_upper_threshold << std::endl;
-                std::cout << "  Contact angle macro  = " << contact_angle_macro_gp << std::endl;
-                std::cout << "  Contact angle equil. = " << contact_angle_equilibrium << std::endl;
-                std::cout << "  Angle difference     = " << diff << std::endl;
-                std::cout << "  Beta                 = " << beta << std::endl;
-                std::cout << "  h_coeff (before)     = " << h_coeff << std::endl;
 
                 // Smoothly reduce h_coeff
                 h_coeff *= (1.0 - beta);
@@ -3092,7 +3087,7 @@ void DropletDynamicsElement<TElementData>::SurfaceTension(
                     if (!Quasi_static_contact_angle) {
                         // AW 12.5: changed to be in accordance with Alirezas latest implementation
                         rhs[ i*(Dim+1) + dimi ] -= h_coeff*coefficient*contact_vector_microS[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i);
-                        rhs[ i*(Dim+1) + dimi ] += h_coeff*coefficientS*wall_tangent[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i); //Contac-line tangential force 
+                        rhs[ i*(Dim+1) + dimi ] += h_coeff*coefficientS*wall_tangent[dimi]*(rCLWeights[i_cl])[clgp]*(rCLShapeFunctions[i_cl])(clgp,i); //Contac-line tangential force  
                         // AW 5.6: made this change */
                         /* rhs[ i*(Dim+1) + dimi ] += h_coeff * coefficient * (std::cos(contact_angle_macro_gp) - std::cos(contact_angle_equilibrium)) 
                                 * wall_tangent[dimi] * (rCLWeights[i_cl])[clgp] * (rCLShapeFunctions[i_cl])(clgp,i); */

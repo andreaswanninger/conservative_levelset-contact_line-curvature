@@ -927,10 +927,10 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         fitting_type = self.main_model_part.ProcessInfo[KratosDroplet.FittingType]
         normal_evaluation_mode = self.main_model_part.ProcessInfo[KratosDroplet.NormalEvaluationMode]
 
-        # AW 19.5: Only run Intersection Points utility if fitting_type is explicitly set to "nurbs" (needed for nurbs fitting) or normal_evaluation_mode==3 (needed for normal averaging)
+        # AW 19.5: Only run Intersection Points utility if fitting_type is explicitly set to "nurbs" (needed for nurbs fitting) or normal_evaluation_mode==3 (needed for normal averaging) or curvature+normal smoothing is activated
         if fitting_type == "nurbs" or normal_evaluation_mode == 2 or normal_evaluation_mode == 3 or self.do_curvature_normal_smoothing:
             # Debug print: delete once it works
-            print(f"IntersectionPointsUtility is executed because fitting_type = '{fitting_type}' or normal_evaluation_mode = {normal_evaluation_mode}.")
+            print(f"IntersectionPointsUtility is executed because fitting_type = '{fitting_type}' or normal_evaluation_mode = {normal_evaluation_mode} or curvature-smoothing = '{self.do_curvature_normal_smoothing}'.")
   
             # Clear any existing intersection points from previous steps
             KratosDroplet.IntersectionPointsUtility.ClearIntersectionPoints()
@@ -953,7 +953,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         # AW 27.5: adapted such that it is also run for normal evaluation mode 2
         if fitting_type == "nurbs" or normal_evaluation_mode == 2:
             # Debug statement: delete once it works
-            print("NURBS fitting is executed because fitting_type is set to 'nurbs'.")
+            print("NURBS fitting is executed because fitting_type is set to 'nurbs' or normal_evaluation_mode set to 2.")
 
 
             ##################### Beginning of Nurbs Fitting ########################
@@ -1030,7 +1030,6 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             #     # fallback to approximation
             #     LeastSquares fit
             # AW-C 26.4: actual code uses an approximate fit (least squares) with the given control point number and degree, which is more robust for noisy or incomplete data
-            print("Entering into curve fitting.")
             print("Entering into curve fitting.")
             # AW 13.5: updated to use less control points in case least squares fitting values due to ill-conditioning
             success = False
@@ -1258,6 +1257,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             ###### AW 2.5: added this part to compute and store curvature at Gauss Points elementally
             # ─────────────────────────────────────────────────────────────────────────────
 
+            # AW 26.6: debug delete this comment
 
             # Load intersection points from file (already done above as `data`)
             # Group intersection points per element
