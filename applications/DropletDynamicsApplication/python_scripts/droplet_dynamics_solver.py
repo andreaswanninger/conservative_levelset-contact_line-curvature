@@ -738,7 +738,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             else:
                 # AW 6.6: 3.1416 replaced by math.pi
                 beta_hydrophilic = 0.5*(1+math.cos(math.pi*(diff_hydrophilic-1.0)/8))
-            print("beta_hydrophilic=",beta_hydrophilic)
+            # print("beta_hydrophilic=",beta_hydrophilic)
             
             # AW 6.6: adapted to consider hydrophilic and hydrophobic contact angle
             diff_hydrophobic = abs(contact_angle_hydrophobic - theta_equilibrium_hydrophobic)
@@ -748,7 +748,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 beta_hydrophobic = 0
             else:
                 beta_hydrophobic = 0.5*(1+math.cos(math.pi*(diff_hydrophobic-1.0)/8))
-            print("beta_hydrophobic=",beta_hydrophobic)
+            # print("beta_hydrophobic=",beta_hydrophobic)
 
             # AW 19.6: added to enforce to "fix" the static eq contact angle, in accordance with Gruending 2020
             if fix_StaticEqContactAngle:
@@ -777,20 +777,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_X, 0)
                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Y, 0)
                     node.SetSolutionStepValue(KratosMultiphysics.DISTANCE_GRADIENT_Z, 0)
-                
-
-                # AW 11.6: debug print, delete once works
-                if not is_horizontal_wall:
-                    # print(f"[DEBUG] node ID {node.Id}, — node.X = {node.X:.12f}, — node.Y = {node.Y:.12f}, |Y - 0.0| = {abs(node.Y - y_bottom_wall)}")
-                    # AW 11.3: delete this print statement once it works
-                    #  Get time info from ProcessInfo
-                    """ time = self.main_model_part.ProcessInfo[KratosMultiphysics.TIME]
-                    step = self.main_model_part.ProcessInfo[KratosMultiphysics.STEP]
-                    print(f"[Step {step} | t = {time:.6f}] Unpenalized normal at X = {node.X:.6f}")
-                    print("gx before: ", gx)
-                    print("gy before: ", gy)
-                    print("gz before: ", gz)
-                                            """
+                                           
                 # Apply contact angle logic on horizontal bottom wall (Y ≈ 0)
                 if is_horizontal_wall and abs(node.Y - y_bottom_wall) < tol:
                     # Penalize hydrophilic eq normal on the left wall (only if penalty coefficient is nonzero)
@@ -803,6 +790,8 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                         )
                         if node.X < self.reference_point_x:
                             gx *= -1
+
+                        #print("Normal enforced at left wall; gx,gy components: ", gx, gy)
                     elif node.X > X_threshold and beta_hydrophobic > 0.0:
                         gy = math.cos(contact_angle_hydrophobic * math.pi / 180) + beta_hydrophobic * (
                             math.cos(theta_equilibrium_hydrophobic * math.pi / 180) - math.cos(contact_angle_hydrophobic * math.pi / 180)
@@ -812,6 +801,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                         )
                         if node.X < self.reference_point_x:
                             gx *= -1
+                        #print("Normal enforced at right wall; gx,gy components: ", gx, gy)
 
                 # Apply contact angle logic on vertical side walls (X ≈ left or right)
                 if not is_horizontal_wall:
@@ -844,7 +834,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                         gx, gy = gy, -gx
 
                         # AW 19.6
-                        print("Normal enforced at left wall; gx,gy components: ", gx, gy)
+                        # print("Normal enforced at left wall; gx,gy components: ", gx, gy)
 
 
                         
@@ -877,14 +867,8 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                         # rotate by 90deg counter-clockwise for rightvertical wall
                         gx, gy = -gy, gx
 
-                        # AW 11.3: delete this print statement once it works
-                        """  print(f"[Step {step} | t = {time:.6f}] Penalized normal at X = {node.X:.6f}")
-                        print("  gx after:", gx)
-                        print("  gy after:", gy)
-                        print("  gz after:", gz) """
-
                         # AW 19.6
-                        print("Normal enforced at right wall; gx,gy components: ", gx, gy)
+                        #print("Normal enforced at right wall; gx,gy components: ", gx, gy)
                
                 # Normalize again and set
                 g = (gx**2 + gy**2 + gz**2)**0.5
@@ -1031,7 +1015,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
 
             ##### Part 3: (Optional) Visualization ######
 
-            plot_nurbs = True
+            plot_nurbs = False
 
             if plot_nurbs:
                 # AW-C 26.4: curve.delta sets the sampling resolution when evaluating the curve (smaller = more points, higher detail)
@@ -1219,7 +1203,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
 
         ##################### End of Nurbs Fitting ########################
 
-        ################### AW 22.5: Start of Unfitted Curvature Smoothing ###################
+        ################### Start of Lowpassfilter on Curvature + Normals  ###################
         
         # user-defined flag to control whether curvature smoothing is performed
         if self.do_curvature_normal_smoothing:
@@ -1233,7 +1217,6 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
             # picks the first contour (in case there are several disconnected ones); assumes one interface currently
             cut_points = contours[0]
             # now a list of [x, y] coordinates tracing the interface, in order
-            # print(cut_points)
 
             # Defines a helper function to map each (x, y) point in cut_points to its corresponding Element_ID from the intersection data
             def match_cut_points_to_elements(cut_points, intersection_data, tol=1e-12):
@@ -1392,113 +1375,30 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
                 method=self.curvature_normal_smoothing_method
             )
 
-        ################### AW 22.5: End of Unfitted Curvature Smoothing ###################
+        ################### Start of Lowpassfilter on Curvature + Normals ###################
 
    
 
         # AW 19.5: execute normal averaging only when explicitly set
         if normal_evaluation_mode == 3:
-            # debug print, delete once it works
             print("Normal averaging is executed because normal_evaluation_mode is set to 3.")
-            ####################### Normal averaging added ##########################
-            # AW 14.5: normal averaging added
-
-            # INTERSECTION LENGTH CALCULATION - CORRECT VERSION
-            timestamp = self.main_model_part.ProcessInfo[KratosMultiphysics.TIME]
-            points_filename = f"intersection_points_{timestamp:.6f}.txt"
-            combined_filename = f"intersection_data_{timestamp:.6f}.txt"
-            averaged_normals_filename = f"averaged_normals_{timestamp:.6f}.txt"
-
-            # Step 1: Clear and collect intersection points
-            KratosDroplet.IntersectionPointsUtility.ClearIntersectionPoints()
-            for element in self.main_model_part.Elements:
-                KratosDroplet.IntersectionPointsUtility.CollectElementIntersectionPoints(element)
-
-            # Step 2: Save intersection points to file
-            #KratosDroplet.IntersectionPointsUtility.SaveIntersectionPointsToFile(points_filename)
-            # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, f"Saved intersection points to {points_filename}")
 
             # Step 3: Calculate and store element intersection lengths
-            num_elements = KratosDroplet.CalculateAndStoreElementIntersectionLengths(self.main_model_part)
-            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-            #                                    f"Calculated and stored intersection lengths for {num_elements} elements")
+            KratosDroplet.CalculateAndStoreElementIntersectionLengths(self.main_model_part)
 
             # Step 4: Calculate interface averages
             KratosDroplet.InterfaceAveragesUtility.ClearInterfaceAverages()
             KratosDroplet.InterfaceAveragesUtility.ComputeModelPartInterfaceAverages(self.main_model_part)
 
             # Step 5: Collect intersection data with normals
-            num_elements = KratosDroplet.CollectIntersectionDataWithNormal(self.main_model_part)
-            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-            #                                    f"Collected {num_elements} elements with intersection data and normals")
-
-            # Step 6: Save the collected data to file
-            #KratosDroplet.SaveIntersectionDataWithNormalToFile(combined_filename)
-            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-            #                                    f"Saved intersection data with normals to {combined_filename}")
+            KratosDroplet.CollectIntersectionDataWithNormal(self.main_model_part)
 
             # Step 7: Set cut normals on elements
-            num_elements_with_normals = KratosDroplet.SetElementCutNormals(self.main_model_part)
-            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__,
-            #                                f"Set cut normals for {num_elements_with_normals} elements")
-            
-            # Step 8: Compute averaged normals with 1 neighbor level
-            num_elements_averaged = KratosDroplet.ComputeAndStoreAveragedNormals(
+            KratosDroplet.SetElementCutNormals(self.main_model_part)
+
+            # Step 8: Compute and store averaged normals (with 2 neighbor layers)
+            KratosDroplet.ComputeAndStoreAveragedNormals(
                 self.main_model_part, 2, "ELEMENT_CUT_NORMAL_AVERAGED")
-            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__,
-            #    f"Computed averaged normals for {num_elements_averaged} elements")
-        
-            # Step 9: Save the averaged normals to file with timestamped filename
-            #KratosDroplet.SaveAveragedNormalsToFile(self.main_model_part, averaged_normals_filename)
-            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__,
-            #    f"Saved averaged normals to {averaged_normals_filename}")
-            ###############################
-            # Step 4: Read the intersection lengths from elements and save to file
-            # Create a map to pass to SaveIntersectionLengthsToFile
-            intersection_lengths = {}
-            for element in self.main_model_part.Elements:
-                length = KratosDroplet.GetElementIntersectionLength(element)
-                if length > 0.0:  # Only save elements that have a valid intersection length
-                    intersection_lengths[element.Id] = length
-        
-            # # Save to file
-            #KratosDroplet.SaveIntersectionLengthsToFile(intersection_lengths, lengths_filename)
-            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-            #                                    f"Saved {len(intersection_lengths)} intersection lengths to {lengths_filename}")
-            
-
-            # # Save element average normals to file
-            #normals_filename = f"element_normals_{timestamp:.6f}.txt"
-            #KratosDroplet.SaveElementAverageNormalsToFile(self.main_model_part, normals_filename)
-            #KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, 
-            #                                    f"Saved element average normals to {normals_filename}")
-            
-            # # Clear any existing intersection points from previous steps
-            # KratosDroplet.IntersectionPointsUtility.ClearIntersectionPoints()
-        
-            # # Collect intersection points from all elements
-            # for element in self.main_model_part.Elements:
-            #     KratosDroplet.IntersectionPointsUtility.CollectElementIntersectionPoints(element)
-            
-            # # # Run diagnostic to check how many elements are split by the level-set
-            # # KratosDroplet.IntersectionPointsUtility.DiagnosticOutput(self.main_model_part)
-        
-            # # Get all intersection points
-            # points = KratosDroplet.IntersectionPointsUtility.GetIntersectionPoints()
-            # KratosMultiphysics.Logger.PrintInfo(self.__class__.__name__, f"Collected {len(points)} intersection points.")
-        
-            # # Save intersection points to file
-            # KratosDroplet.IntersectionPointsUtility.SaveIntersectionPointsToFile("intersection_points.txt")
-            # AW 14.5: end of the additional normal averaging
-            ####################### End of normal averaging #########################
-
-        
-
-        
-        
-
-
-      
 
         # Initialize the solver current step
         self._GetSolutionStrategy().InitializeSolutionStep()
@@ -1512,7 +1412,7 @@ class DropletDynamicsSolver(PythonSolver):  # Before, it was derived from Navier
         self._GetSolutionStrategy().Predict()
 
 
-    # AW 10.6: outcommented this for leveque test
+    # AW 10.6: outcomment this for leveque test
     def SolveSolutionStep(self):
         is_converged = self._GetSolutionStrategy().SolveSolutionStep()
         if not is_converged:
